@@ -1,0 +1,12 @@
+id: inzDateSelect
+name: INZ Date Select
+metadata:
+  description: Date filtering and proximity sorting for the gallery picker in the scene editor and the scene picker in the gallery editor.
+version: 1.0.0
+date: "2026-08-13 00:00:00"
+requires: []
+source_repository: ""
+files:
+- inzDateSelect.js
+- inzDateSelect.css
+- inzDateSelect.yml

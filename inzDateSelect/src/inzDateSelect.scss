@@ -1,0 +1,15 @@
+.inz-date-filter {
+  display: flex;
+  margin-top: 0.35rem;
+
+  // The marker element is rendered by every patched select so the plugin can
+  // detect its DOM context; outside the target forms it stays empty.
+  &:empty {
+    display: none;
+  }
+
+  .btn {
+    font-size: 0.8rem;
+    padding: 0.1rem 0.5rem;
+  }
+}
