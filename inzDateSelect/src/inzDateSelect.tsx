@@ -79,6 +79,11 @@ interface IPluginApi {
 
   // PluginApi.hooks.useSettings() is unusable here: its SettingsContext provider
   // only wraps the settings page, not the edit panels.
+  //
+  // Stash has no notion of a default for a plugin setting — the settings page shows
+  // an unset NUMBER as 0 and an unset BOOLEAN as off. So the unset value has to mean
+  // the default: 0 spread falls back to DEFAULT_SPREAD, and the boolean is phrased
+  // negatively so that off is the desired behaviour.
   function usePluginSettings(): ISettings {
     const { data } = useConfiguration();
 
@@ -91,7 +96,7 @@ interface IPluginApi {
           Number.isFinite(spread) && spread > 0
             ? Math.floor(spread)
             : DEFAULT_SPREAD,
-        sortByProximity: raw.sortByProximity !== false,
+        sortByProximity: raw.disableProximitySort !== true,
       };
     }, [data]);
   }
@@ -269,13 +274,19 @@ interface IPluginApi {
       React.createElement(SceneDateSelect, { ...props, __next: original })
   );
 
-  PluginApi.patch.after(
-    "GallerySelect.sort",
-    (_input: string, _galleries: IDated[], result: IDated[]) => resortByProximity(result)
-  );
+  // PatchFunction invokes after-hooks as args.concat(result). The sort result is an
+  // array and Array.prototype.concat flattens it, so the items arrive spread over
+  // the trailing arguments instead of as one array. The Array.isArray branch keeps
+  // this working if Stash ever passes the result unflattened.
+  function sortPatch(_input: string, _items: IDated[], ...result: unknown[]): IDated[] {
+    const items =
+      result.length === 1 && Array.isArray(result[0])
+        ? (result[0] as IDated[])
+        : (result as IDated[]);
 
-  PluginApi.patch.after(
-    "SceneSelect.sort",
-    (_input: string, _scenes: IDated[], result: IDated[]) => resortByProximity(result)
-  );
+    return resortByProximity(items);
+  }
+
+  PluginApi.patch.after("GallerySelect.sort", sortPatch);
+  PluginApi.patch.after("SceneSelect.sort", sortPatch);
 })();

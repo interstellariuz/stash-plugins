@@ -1,6 +1,6 @@
 name: INZ Date Select
 description: Date filtering and proximity sorting for the gallery picker in the scene editor and the scene picker in the gallery editor.
-version: 1.0.0
+version: 1.0.1
 ui:
   javascript:
     - inzDateSelect.js
@@ -9,9 +9,9 @@ ui:
 settings:
   similarDaysSpread:
     displayName: Similar days spread
-    description: Half-width in days of the window used by the "similar days" button. Defaults to 45.
+    description: Half-width in days of the window used by the "similar days" button. 0 means use the built-in default of 45.
     type: NUMBER
-  sortByProximity:
-    displayName: Sort by date proximity
-    description: While a date filter is active, order the dropdown by distance from the edited date instead of by title. Enabled by default.
+  disableProximitySort:
+    displayName: Keep alphabetical order
+    description: By default, while a date filter is active the dropdown is ordered by distance from the edited date. Turn this on to keep the usual title order instead.
     type: BOOLEAN
