@@ -39,6 +39,10 @@ _SSIM_RE = re.compile(r"\[ssim@(lr|tb|lrm|tbm) @[^\]]*\]\s+SSIM\b.*?\bAll:([0-9.
 # happens to win the noise.
 _UNIFORM_CUT = 0.985
 
+# One decoded frame plus four cheap 192x192 comparisons. Generous enough for a
+# cold cache on a spinning disk, short enough that a wedged file gives up.
+SSIM_TIMEOUT = 120
+
 
 class Geometry:
     """The crop that isolates one eye, plus the filter chain built on top."""
@@ -182,17 +186,21 @@ def _ssim_at(path, timestamp, width, height):
 
     args = [
         "-hide_banner", "-v", "info", "-nostats", "-y",
-        "-ss", "%.3f" % timestamp, "-i", path, "-frames:v", "1", "-an",
+        "-ss", "%.3f" % timestamp, "-i", path, "-an",
         "-filter_complex", filtergraph,
-        "-map", "[s1]", "-f", "null", "-",
-        "-map", "[s2]", "-f", "null", "-",
-        "-map", "[s3]", "-f", "null", "-",
-        "-map", "[s4]", "-f", "null", "-",
     ]
+    # -frames:v is an output option and binds to the next output only. Setting
+    # it once before the first -map leaves the other three comparisons running
+    # to the end of the file: they would decode everything past the seek point
+    # and report an average over all of it instead of this one frame. On an
+    # eight-minute-plus VR file that is the difference between 0.1 seconds and
+    # a timeout.
+    for label in ("s1", "s2", "s3", "s4"):
+        args += ["-map", "[%s]" % label, "-frames:v", "1", "-f", "null", "-"]
 
     # SSIM prints its summary at info level, so unlike every other call here
     # the loglevel cannot be "error".
-    stderr = vrmedia.run(args, want_stderr=True, timeout=120)
+    stderr = vrmedia.run(args, want_stderr=True, timeout=SSIM_TIMEOUT)
     return {name: float(value) for name, value in _SSIM_RE.findall(stderr)}
 
 
@@ -245,9 +253,12 @@ def decide(scene, video_file, probe, settings):
             path, probe["width"], probe["height"], probe["duration"], settings.layoutSamples
         )
         if content:
-            detail.update({"s_lr": round(content["lr"], 4), "s_tb": round(content["tb"], 4)})
-            if "lrm" in content:
-                detail["s_lrm"] = round(content["lrm"], 4)
+            # All four, including both mirror controls: these are the numbers
+            # "Detect layouts only" exists to show, and the thresholds cannot
+            # be calibrated against half of them.
+            for key in ("lr", "lrm", "tb", "tbm"):
+                if key in content:
+                    detail["s_" + key] = round(content[key], 4)
 
     content_layout = _content_verdict(content, settings, detail)
 
@@ -269,7 +280,18 @@ def decide(scene, video_file, probe, settings):
     elif name_layout:
         layout, signal = name_layout, "filename"
     else:
+        # Last resort. Worth telling apart two ways of getting here: an
+        # ambiguous reading still says the file looks stereo on both axes, so
+        # the shape is a fair tiebreak, but no reading at all means shape is
+        # the only evidence there is — and a mono 360 file is exactly 2:1, the
+        # same shape as a side-by-side pair.
         layout, signal = _from_aspect(probe), "aspect"
+        if content is None and layout != MONO and probe["duration"] > 0:
+            vrlog.warning(
+                "%s: could not read the picture, guessing %s from its %dx%d shape alone — "
+                "pin it with the inz_vr_layout custom field if that is wrong"
+                % (os.path.basename(path), layout, probe["width"], probe["height"])
+            )
 
     detail["signal"] = signal
     return layout, _projection_for(layout, name_projection, settings), detail

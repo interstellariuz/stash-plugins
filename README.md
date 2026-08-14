@@ -54,16 +54,17 @@ RUN apk add --no-cache python3
 `docker exec stash apk add --no-cache python3` works too, but does not survive recreating the
 container. Nothing beyond the standard library is needed — no pip packages.
 
-Stash's generation settings change between releases, so the plugin introspects the schema on
-startup and asks only for the settings the server actually has; anything missing falls back to
-what that version hardcoded. Tested against v0.31.1, which has no configurable marker preview
-duration and capped it at 20 seconds.
+**Stash v0.31.1 or newer.** Generation settings change between releases, so the plugin introspects
+the schema on startup and asks only for the settings the server actually has; anything missing
+falls back to what that version hardcoded. v0.31.1, for instance, has no configurable marker
+preview duration and capped it at 20 seconds.
 
 #### Which scenes
 
 Scenes carrying the VR tag from **Settings → Interface → VR tag**, the same one that makes the
 player's VR button appear. Override it with the `vrTagName` setting, add more with
-`extraTagNames`, and opt individual scenes out with `excludeTagNames`.
+`extraTagNames`, and opt individual scenes out with `excludeTagNames`. Tags are matched by name,
+ignoring case; child tags count too.
 
 #### Which eye
 
@@ -83,8 +84,19 @@ The `stereoThreshold` default of 0.75 sits between them. Anything that does not 
 stereo is reported `mono` and left completely alone — the safe direction, since a wrong stereo
 verdict would crop away half of a perfectly good 2D scene.
 
-Run **Detect layouts only** first: it logs the raw scores per scene without encoding anything, so
-the thresholds can be checked against a real library before committing to a full run.
+The mirror control is what carries the awkward cases. A flat 2:1 scene can easily score 0.83 on
+the top-versus-bottom comparison — well over the threshold — and would be cropped in half on that
+evidence alone; its own mirror scores 0.83 too, which is what marks it as symmetry rather than
+stereo.
+
+Run **Detect layouts only** first: it logs all four scores per scene without encoding anything, so
+the thresholds can be checked against a real library before committing to a full run. If the
+picture cannot be read at all the scene falls back to its shape, and says so in a warning — that
+is the one path that can misjudge a mono 360 file, which has the same 2:1 shape as a stereo pair.
+
+`stereoThreshold`, `layoutMargin` and `dewarpAspect` are text fields rather than number fields.
+Stash's number input runs the value through `parseInt`, so `0.75` would arrive as `0`; as text the
+fraction survives. `dewarpAspect` also accepts `16:9`.
 
 #### Flattening
 
@@ -111,6 +123,11 @@ output already exists. Only a run with *overwrite* enabled replaces them, and th
 on the next pass: it records the size and modification time of everything it writes, so a re-run
 is a `stat` per artifact and rebuilds only what actually changed.
 
+Settings are tracked the same way, in two halves. Retuning a detection threshold re-examines the
+picture but leaves alone the artifacts whose verdict did not move; changing the eye or the dewarp
+re-encodes without re-probing. A scene that fails part way through keeps the artifacts it already
+finished, so an interrupted run resumes instead of starting over.
+
 #### Notes
 
 - Marker screenshots and covers are capped at 1920 wide. Stash uses native resolution, which for
@@ -118,5 +135,28 @@ is a `stat` per artifact and rebuilds only what actually changed.
 - The sprite montage is built with ffmpeg's `tile` filter over piped raw frames; Stash does it in
   Go with `imaging`. Visually equivalent, not byte-identical.
 - Stash stops plugins with SIGKILL, so everything is written to a temporary file beside its
-  destination and moved into place atomically. A kill can leave `*.inzvr.tmp*` files behind;
-  **Prune state** sweeps them.
+  destination and moved into place atomically. A kill can leave `*.inzvr.tmp*` files and
+  directories behind; **Prune state** sweeps anything carrying that marker and older than a day.
+- The preview is retried with slow seek when fast seek fails, and switches to `-vsync 2` for a
+  file reporting a nonsense frame rate — both of which Stash's own preview task does, and without
+  which a handful of files that Stash can preview would come back as failures here.
+
+## Development
+
+```
+npm run build      # copy/compile each plugin into <plugin>/dist/<id>/
+npm run package    # zip every dist package and write pages/index.yml
+```
+
+`npm run check:graphql` validates every query inzVrPreview can send against Stash's real schema —
+both the oldest supported release and whatever the checkout is on — including the variables, so a
+wrong field in `SceneUpdateInput` fails too. It reads the SDL out of a Stash source checkout, `../stash`
+by default:
+
+```
+STASH_SRC=/path/to/stash npm run check:graphql
+```
+
+Without a checkout it reports a skip and exits 0, so it never blocks a build. Worth running after
+touching anything in [vrstash.py](inzVrPreview/src/vrstash.py) — Stash returns HTTP 422 for an
+unknown field, which surfaces as a plugin-wide failure rather than a missing value.

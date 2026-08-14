@@ -23,10 +23,25 @@ WEBP_FPS = 12
 MARKER_WEBP_SECONDS = 5
 COVER_POSITION = 0.2
 
+# DefaultSpriteAmount: what Stash uses when the sprite interval settings are
+# left off, and the source of the historical 9x9 grid.
+DEFAULT_SPRITE_AMOUNT = 81
+
+# fallbackMinSlowSeek: how much of the seek the retry decodes rather than skips.
+SLOW_SEEK_MIN = 20.0
+
+# Below this reported frame rate Stash assumes a misread variable frame rate
+# file and switches the preview to -vsync 2.
+VFR_FRAME_RATE = 0.01
+
 # Above this, raw sprite cells go to a scratch file rather than being held in
 # memory. The default 81 cells of 160x90 are 3.5 MB; 500 cells at 480 wide
 # would be nearly 200 MB.
 MAX_SPRITE_MEMORY = 128 * 1024 * 1024
+
+# Preview chunks are encoded into a scratch directory under <generated>/tmp.
+# Carries the temp marker so a killed run leaves a sweepable trail.
+CHUNK_DIR_PREFIX = "inzvr" + vrstate.TMP_SUFFIX + "-"
 
 _WEBP_ARGS = [
     "-lossless", "1",
@@ -108,7 +123,7 @@ def preview_segments(duration, options):
 
     # Stash collapses a video shorter than the total preview into one chunk
     # covering the whole thing, rather than emitting overlapping slices.
-    if duration < segment_duration * segments:
+    if duration <= 0 or duration < segment_duration * segments:
         return [(0.0, duration)]
 
     exclude_start = _exclude_value(duration, options["exclude_start"])
@@ -123,37 +138,81 @@ def preview_segments(duration, options):
     return [(offset + index * step, length) for index in range(segments)]
 
 
+def _chunk_args(source, start, length, target, video_filter, audio, options, fallback, vsync2):
+    """One preview segment, as transcoder.Transcode assembles it.
+
+    Fast seek puts -ss before the input, which is quick but lands on the
+    nearest keyframe. The fallback moves the last stretch of the seek after
+    the input so ffmpeg decodes into position instead — slower, but it is what
+    rescues the avi and wmv files that decode green blocks otherwise. -xerror
+    goes with the first attempt only, so the retry is not tripped by the same
+    warning that failed it.
+    """
+    fast, slow = start, 0.0
+    if fallback:
+        if start > SLOW_SEEK_MIN:
+            fast, slow = start - SLOW_SEEK_MIN, SLOW_SEEK_MIN
+        else:
+            fast, slow = 0.0, start
+
+    args = ["-v", "error", "-y"]
+    args += options["input_args"]
+    if not fallback:
+        args += ["-xerror"]
+    if fast > 0:
+        args += ["-ss", "%.3f" % fast]
+    args += ["-i", source]
+    if slow > 0:
+        args += ["-ss", "%.3f" % slow]
+    args += [
+        "-t", "%.3f" % length,
+        "-max_muxing_queue_size", "1024",
+        "-c:v", "libx264",
+        "-vf", video_filter,
+        "-pix_fmt", "yuv420p",
+        "-profile:v", "high",
+        "-level", "4.2",
+        "-preset", options["preset"],
+        "-crf", "21",
+        "-threads", str(options["threads"]),
+        "-strict", "-2",
+    ]
+    if vsync2:
+        args += ["-vsync", "2"]
+    args += ["-c:a", "aac", "-b:a", PREVIEW_AUDIO_BITRATE] if audio else ["-an"]
+    args += options["output_args"]
+    args += [target]
+    return args
+
+
 def generate_preview(source, geometry, target, options, probe):
+    """The preview video, retried with slow seek exactly as Stash retries it."""
+    try:
+        return _preview_attempt(source, geometry, target, options, probe, fallback=False)
+    except vrmedia.FfmpegError as exc:
+        vrlog.warning("preview failed (%s), retrying with slow seek" % _one_line(exc))
+        return _preview_attempt(source, geometry, target, options, probe, fallback=True)
+
+
+def _preview_attempt(source, geometry, target, options, probe, fallback):
     chunks = preview_segments(probe["duration"], options)
     video_filter = geometry.vf(width=PREVIEW_WIDTH)
     audio = options["audio"] and probe["has_audio"]
+    # A frame rate this low is almost always a misread of a variable frame rate
+    # file, where the default vsync drops the preview to a handful of frames.
+    vsync2 = probe["frame_rate"] <= VFR_FRAME_RATE
 
-    with tempfile.TemporaryDirectory(prefix="inzvr-", dir=options["tmp_dir"]) as workdir:
+    # The marker is in the directory name so that a run killed mid-encode
+    # leaves something Prune state recognises as ours.
+    with tempfile.TemporaryDirectory(prefix=CHUNK_DIR_PREFIX, dir=options["tmp_dir"]) as workdir:
         names = []
         for index, (start, length) in enumerate(chunks):
             name = "chunk_%03d.mp4" % index
-            args = ["-v", "error", "-y"]
-            args += options["input_args"]
-            args += [
-                "-xerror",
-                "-ss", "%.3f" % start,
-                "-i", source,
-                "-t", "%.3f" % length,
-                "-max_muxing_queue_size", "1024",
-                "-c:v", "libx264",
-                "-vf", video_filter,
-                "-pix_fmt", "yuv420p",
-                "-profile:v", "high",
-                "-level", "4.2",
-                "-preset", options["preset"],
-                "-crf", "21",
-                "-threads", str(options["threads"]),
-                "-strict", "-2",
-            ]
-            args += ["-c:a", "aac", "-b:a", PREVIEW_AUDIO_BITRATE] if audio else ["-an"]
-            args += options["output_args"]
-            args += [os.path.join(workdir, name)]
-            vrmedia.run(args, timeout=options["timeout"])
+            vrmedia.run(
+                _chunk_args(source, start, length, os.path.join(workdir, name),
+                            video_filter, audio, options, fallback, vsync2),
+                timeout=options["timeout"],
+            )
             names.append(name)
 
         # The concat demuxer runs in safe mode, which is why the list holds bare
@@ -174,6 +233,14 @@ def generate_preview(source, geometry, target, options, probe):
             discard(tmp)
             raise
     return vrstate.stamp(target)
+
+
+def _one_line(exc, limit=300):
+    """An ffmpeg failure squashed onto one line, for a message that has room."""
+    text = " ".join(part.strip() for part in str(exc).splitlines() if part.strip())
+    if not text:
+        return exc.__class__.__name__
+    return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
 # --------------------------------------------------------------------------
@@ -210,16 +277,21 @@ def sprite_grid(duration, options):
     """Cell count and grid size, replicating NewSpriteGenerator."""
     if not options["custom_interval"]:
         # The default config pins both bounds to 81, giving the historical 9x9.
-        interval = duration / 81.0
+        interval = duration / DEFAULT_SPRITE_AMOUNT
     else:
         minimum = max(1, int(options["minimum_sprites"]))
         maximum = int(options["maximum_sprites"])
-        interval = float(options["interval"]) or duration / minimum
-        count = int(math.ceil(duration / interval))
-        if maximum > 0 and count > maximum:
-            interval = duration / maximum
-        if count < minimum:
+        interval = float(options["interval"])
+        if interval <= 0:
+            # calculateSpriteInterval returns here, before the bounds are
+            # applied — the interval it just derived already satisfies them.
             interval = duration / minimum
+        else:
+            count = int(math.ceil(duration / interval))
+            if maximum > 0 and count > maximum:
+                interval = duration / maximum
+            if count < minimum:
+                interval = duration / minimum
 
     count = int(math.ceil(duration / interval)) if interval > 0 else 1
     # Rounded up to a perfect square so the grid has no empty cells.
@@ -288,11 +360,16 @@ def generate_sprite(source, geometry, sprite_target, vtt_target, options, probe)
         if total > MAX_SPRITE_MEMORY:
             # Large cells at a high sprite count would mean holding hundreds of
             # megabytes of raw frames in memory; spill them to disk instead.
-            spill = os.path.join(options["tmp_dir"], "sprite%s.rgb" % vrstate.TMP_SUFFIX)
+            # The name has to be unique: scenes are processed concurrently, and
+            # two workers sharing one scratch file would interleave their
+            # frames into each other's sprites.
+            handle, spill = tempfile.mkstemp(
+                dir=options["tmp_dir"], prefix="sprite.", suffix=vrstate.TMP_SUFFIX + ".rgb"
+            )
             try:
-                with open(spill, "wb") as handle:
+                with os.fdopen(handle, "wb") as sink:
                     for frame in frames:
-                        handle.write(frame)
+                        sink.write(frame)
                 frames = None
                 vrmedia.run(montage + ["-i", spill] + tail, timeout=options["timeout"])
             finally:
@@ -344,10 +421,15 @@ def _write_vtt(target, sprite_target, count, grid, cell_w, cell_h, probe):
     # consistent with every non-VR scene in the library.
     frames = probe["frames"] or int(probe["frame_rate"] * probe["duration"])
     rate = probe["frame_rate"]
+    step = 0.0
     if frames > 0 and rate > 0:
         step = (frames // count) / rate
-    else:
-        step = probe["duration"] / count
+    if step <= 0:
+        # Fewer frames than cells makes NthFrame zero and every cue
+        # zero-length, which leaves the scrubber with nothing to show. Stash
+        # switches to its frame-seeking path here; falling back to the duration
+        # gets the same monotonic cues without a second capture strategy.
+        step = probe["duration"] / count if count > 0 else 0.0
 
     name = os.path.basename(sprite_target)
     lines = ["WEBVTT", ""]

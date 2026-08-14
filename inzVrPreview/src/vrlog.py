@@ -24,8 +24,16 @@ def set_debug(enabled):
 
 def _log(level_char, message):
     prefix = (_SOH + level_char + _STX).decode()
+    # Stash reads stderr a line at a time and looks for the level prefix at the
+    # start of each one, so a multi-line message has to be tagged line by line.
+    # Left alone, everything after the first newline would arrive at the
+    # plugin's errLog level instead — a debug traceback as a stack of errors.
+    # Blank lines are dropped: detectLogLevel needs a character after the
+    # prefix, and Stash ignores empty lines anyway.
+    lines = [line for line in str(message).splitlines() if line.strip()] or ["(empty)"]
     with _lock:
-        print(prefix + str(message) + "\n", file=sys.stderr, flush=True)
+        for line in lines:
+            print(prefix + line, file=sys.stderr, flush=True)
 
 
 def trace(message):

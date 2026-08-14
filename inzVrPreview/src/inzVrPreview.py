@@ -94,7 +94,8 @@ class Context:
             "timeout": None,
         }
 
-        self.fingerprint = settings.fingerprint()
+        self.render_fingerprint = settings.render_fingerprint()
+        self.detect_fingerprint = settings.detect_fingerprint()
         self.counts = {
             "processed": 0, "skipped": 0, "failed": 0, "mono": 0,
             "sbs": 0, "tb": 0,
@@ -148,12 +149,17 @@ def process_scene(context, scene, run_progress):
         probe = vrmedia.probe(source)
         signature = vrstate.source_signature(video_file, probe)
 
-        stale = (
-            record.get("source") != signature
-            or record.get("options") != context.fingerprint
-        )
-        if stale:
+        # A different file behind the same scene invalidates everything. The
+        # two settings digests invalidate their own half: retuning a detection
+        # threshold re-examines the picture but keeps artifacts whose verdict
+        # did not move, and changing the geometry re-encodes without re-probing.
+        if record.get("source") != signature:
             record = {}
+        if record.get("detect") != context.detect_fingerprint:
+            record.pop("layout", None)
+            record.pop("projection", None)
+        if record.get("render") != context.render_fingerprint:
+            record.pop("artifacts", None)
 
         layout = record.get("layout")
         projection = record.get("projection")
@@ -168,13 +174,11 @@ def process_scene(context, scene, run_progress):
             raise Skip("not stereo, leaving it alone")
 
         geometry = vrlayout.Geometry(layout, projection, probe["width"], probe["height"], settings)
-        record.update({
-            "scene_id": scene.get("id"),
-            "layout": layout,
-            "projection": projection,
-            "source": signature,
-            "options": context.fingerprint,
-        })
+        # Written now rather than only after a successful build, so that a
+        # scene with nothing to do still records the verdict it just reached —
+        # otherwise a retuned threshold would re-probe every up-to-date scene
+        # on every subsequent run.
+        _remember(context, digest, scene, layout, projection, signature, record)
         artifacts = record.setdefault("artifacts", {})
 
         todo = _outstanding(context, digest, scene, artifacts)
@@ -188,8 +192,14 @@ def process_scene(context, scene, run_progress):
             context.tally("processed")
             return
 
-        _build(context, scene, digest, source, geometry, probe, artifacts, todo, progress, label)
-        context.store.save(digest, record)
+        try:
+            _build(context, scene, digest, source, geometry, probe, artifacts, todo, progress, label)
+        finally:
+            # Saved even when a later artifact blows up, so a run that dies
+            # half way through a scene does not throw away the encodes that
+            # did land — on a library of hour-long VR files that is the
+            # difference between resuming and starting over.
+            context.store.save(digest, record)
         context.tally("processed")
 
     except Skip as exc:
@@ -211,18 +221,18 @@ def _describe(detail):
     return " ".join(parts)
 
 
-def _remember(context, digest, scene, layout, projection, signature, record):
-    """Cache a verdict so the next run does not probe the file again."""
-    if context.dry_run:
-        return
+def _remember(context, digest, scene, layout, projection, signature, record, save=True):
+    """Stamp a verdict onto the record so the next run does not probe again."""
     record.update({
         "scene_id": scene.get("id"),
         "layout": layout,
         "projection": projection,
         "source": signature,
-        "options": context.fingerprint,
+        "detect": context.detect_fingerprint,
+        "render": context.render_fingerprint,
     })
-    context.store.save(digest, record)
+    if save and not context.dry_run:
+        context.store.save(digest, record)
 
 
 def _outstanding(context, digest, scene, artifacts):
@@ -278,7 +288,11 @@ def _build(context, scene, digest, source, geometry, probe, artifacts, todo, pro
         temporary = None
         if not os.path.isfile(preview_path) or not vrstate.matches(preview_path, artifacts.get("preview")):
             vrlog.debug("%s: preview is not ours, encoding one for the webp" % label)
-            temporary = os.path.join(options["tmp_dir"], "%s.webpsrc.mp4" % digest)
+            # Carries the temp marker so Prune state can sweep it if we are
+            # killed between writing it and removing it.
+            temporary = os.path.join(
+                options["tmp_dir"], "%s.webpsrc%s.mp4" % (digest, vrstate.TMP_SUFFIX)
+            )
             vrartifacts.generate_preview(source, geometry, temporary, options, probe)
         try:
             vrlog.debug("%s: animated webp" % label)
@@ -347,8 +361,9 @@ def collect_scenes(context, args):
     exclude = vrstash.resolve_tag_ids(stash, settings.exclude_names())
 
     vrlog.info("looking for scenes tagged %s" % ", ".join(names))
-    return [scene for _, scene in
-            vrstash.iter_scenes(stash, context.schema, include, exclude, settings.sceneLimit)]
+    return list(
+        vrstash.iter_scenes(stash, context.schema, include, exclude, settings.sceneLimit)
+    )
 
 
 def prune(context):

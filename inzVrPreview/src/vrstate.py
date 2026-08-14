@@ -11,11 +11,14 @@ expects the next run to rebuild everything.
 
 import json
 import os
+import shutil
 import time
 
 import vrlog
 
-VERSION = 1
+# 2: the single "options" digest split into "detect" and "render", so that
+# retuning detection no longer re-encodes artifacts it did not change.
+VERSION = 2
 DIRNAME = "inzVrPreview"
 TMP_SUFFIX = ".inzvr.tmp"
 
@@ -100,24 +103,41 @@ def _as_int(value):
 def sweep_temp_files(*directories):
     """Remove leftovers from a run that was killed mid-write.
 
-    Only files older than a day, so a sweep cannot pull the rug out from under
-    a run happening at the same time.
+    Only entries older than a day, so a sweep cannot pull the rug out from
+    under a run happening at the same time. Preview chunks go into a whole
+    scratch directory rather than a single file, so directories carrying the
+    marker are removed as a unit.
     """
     cutoff = time.time() - 24 * 3600
     removed = 0
+
+    def stale(path):
+        try:
+            return os.path.getmtime(path) < cutoff
+        except OSError:
+            return False
+
     for directory in directories:
-        # Markers live one directory deeper, under a per-scene folder.
-        for root, _, names in os.walk(directory):
+        # Markers live one directory deeper, under a per-scene folder. Walking
+        # bottom-up lets a marked directory be removed after its contents.
+        for root, subdirs, names in os.walk(directory, topdown=False):
             for name in names:
-                if TMP_SUFFIX not in name:
-                    continue
                 full = os.path.join(root, name)
-                try:
-                    if os.path.getmtime(full) < cutoff:
+                if TMP_SUFFIX in name and stale(full):
+                    try:
                         os.remove(full)
                         removed += 1
-                except OSError:
-                    pass
+                    except OSError:
+                        pass
+            for name in subdirs:
+                full = os.path.join(root, name)
+                if TMP_SUFFIX in name and stale(full):
+                    try:
+                        shutil.rmtree(full)
+                        removed += 1
+                    except OSError:
+                        pass
+
     if removed:
         vrlog.info("removed %d stale temporary file(s)" % removed)
     return removed

@@ -53,12 +53,12 @@ settings:
     type: NUMBER
   stereoThreshold:
     displayName: Stereo threshold
-    description: How alike two halves must be to count as a stereo pair. 0 uses the default of 0.75. Lower it if VR scenes are being reported as flat.
-    type: NUMBER
+    description: How alike two halves must be to count as a stereo pair, between 0 and 1. Empty uses the default of 0.75. Lower it if VR scenes are being reported as flat.
+    type: STRING
   layoutMargin:
     displayName: Layout margin
-    description: Gap required between the two axes when both look stereo. 0 uses the default of 0.06.
-    type: NUMBER
+    description: Gap required between the two axes when both look stereo, between 0 and 1. Empty uses the default of 0.06.
+    type: STRING
 
   useSecondEye:
     displayName: Use the right or bottom eye
@@ -74,8 +74,8 @@ settings:
     type: NUMBER
   dewarpAspect:
     displayName: Flattened aspect ratio
-    description: Width divided by height of the flattened frame. 0 uses the default of 1.7778, which is 16:9.
-    type: NUMBER
+    description: Shape of the flattened frame, written as 16:9 or as a plain number. Empty uses the default of 16:9.
+    type: STRING
   defaultProjection:
     displayName: Default projection
     description: Source projection to assume when the filename does not say. One of auto, hequirect, equirect, fisheye190, fisheye200, fisheye220. Only matters when flattening.

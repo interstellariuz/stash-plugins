@@ -10,6 +10,11 @@ import vrlog
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
+# A probe is a handful of reads at the head of the file; anything longer than
+# this means unreadable media or a stalled network mount, and one such file
+# must not hold up the whole run.
+PROBE_TIMEOUT = 120
+
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -44,15 +49,27 @@ def resolve_binaries(config_general, stash_dir):
 
 
 def run(args, stdin_data=None, capture_stdout=False, timeout=None, want_stderr=False):
-    """Run ffmpeg. Returns stdout bytes, or stderr text when want_stderr."""
-    proc = subprocess.run(
-        [FFMPEG] + args,
-        input=stdin_data,
-        stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        creationflags=_CREATE_NO_WINDOW,
-    )
+    """Run ffmpeg. Returns stdout bytes, or stderr text when want_stderr.
+
+    stdin is closed off unless we are piping frames in. ffmpeg reads stdin for
+    interactive keystrokes, and the stdin this process inherits is the pipe
+    Stash sends the plugin input down — several ffmpegs racing to read it is a
+    good way to lose data or wedge.
+    """
+    command = [FFMPEG, "-nostdin"] if stdin_data is None else [FFMPEG]
+    try:
+        proc = subprocess.run(
+            command + args,
+            input=stdin_data,
+            stdin=None if stdin_data is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FfmpegError("ffmpeg timed out after %ss" % exc.timeout) from exc
+
     stderr = proc.stderr.decode("utf-8", "replace")
     if proc.returncode != 0:
         tail = "\n".join(stderr.strip().splitlines()[-12:])
@@ -62,14 +79,20 @@ def run(args, stdin_data=None, capture_stdout=False, timeout=None, want_stderr=F
     return proc.stdout if capture_stdout else b""
 
 
-def probe(path):
+def probe(path, timeout=PROBE_TIMEOUT):
     """Video stream facts, derived the way pkg/ffmpeg/ffprobe.go derives them."""
-    proc = subprocess.run(
-        [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=_CREATE_NO_WINDOW,
-    )
+    try:
+        proc = subprocess.run(
+            [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FfmpegError("ffprobe timed out after %ss for %s" % (exc.timeout, path)) from exc
+
     if proc.returncode != 0:
         raise FfmpegError("ffprobe failed for %s: %s" % (path, proc.stderr.decode("utf-8", "replace")[:300]))
 
