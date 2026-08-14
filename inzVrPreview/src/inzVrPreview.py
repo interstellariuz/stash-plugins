@@ -30,16 +30,25 @@ HASH_RE = re.compile(r"/scene/([0-9a-fA-F]+)_sprite\.jpg")
 
 ARTIFACTS = ("preview", "webp", "sprite", "markers", "cover")
 
+# What Stash used before the marker preview durations became configurable.
+LEGACY_MARKER_SECONDS = 20
+
 
 class Skip(Exception):
     """A scene that is deliberately left alone."""
 
 
+def _or_default(value, default):
+    """Distinguish a missing setting from one deliberately set to zero."""
+    return default if value is None else value
+
+
 class Context:
     """Everything a worker needs, resolved once at startup."""
 
-    def __init__(self, stash, config, settings, force, dry_run):
+    def __init__(self, stash, schema, config, settings, force, dry_run):
         self.stash = stash
+        self.schema = schema
         self.settings = settings
         self.force = force
         self.dry_run = dry_run
@@ -66,8 +75,11 @@ class Context:
             "exclude_start": general.get("previewExcludeStart") or "0",
             "exclude_end": general.get("previewExcludeEnd") or "0",
             "audio": general.get("previewAudio", True),
-            "max_marker": general.get("maxMarkerPreviewDuration") or 0,
-            "default_marker": general.get("defaultMarkerPreviewDuration") or 20,
+            # Before these became settings, Stash capped marker previews at a
+            # hardcoded 20 seconds, so that is the fallback when the server is
+            # old enough not to expose them. A configured 0 means uncapped.
+            "max_marker": _or_default(general.get("maxMarkerPreviewDuration"), LEGACY_MARKER_SECONDS),
+            "default_marker": general.get("defaultMarkerPreviewDuration") or LEGACY_MARKER_SECONDS,
             "cell_size": general.get("spriteScreenshotSize") or 160,
             "custom_interval": bool(general.get("useCustomSpriteInterval")),
             "interval": general.get("spriteInterval") or 0,
@@ -320,7 +332,7 @@ def collect_scenes(context, args):
     raw_ids = str(args.get("sceneIds") or "").strip()
     if raw_ids:
         ids = [part.strip() for part in raw_ids.replace(",", " ").split() if part.strip()]
-        return vrstash.scenes_by_id(stash, ids)
+        return vrstash.scenes_by_id(stash, context.schema, ids)
 
     ui_tag = (context.ui or {}).get("vrTag")
     names = settings.tag_names(ui_tag)
@@ -336,7 +348,7 @@ def collect_scenes(context, args):
 
     vrlog.info("looking for scenes tagged %s" % ", ".join(names))
     return [scene for _, scene in
-            vrstash.iter_scenes(stash, include, exclude, settings.sceneLimit)]
+            vrstash.iter_scenes(stash, context.schema, include, exclude, settings.sceneLimit)]
 
 
 def prune(context):
@@ -431,14 +443,18 @@ def main():
     try:
         connection = payload.get("server_connection") or {}
         stash = vrstash.Stash(connection)
-        config = vrstash.get_config(stash)
+        # Ask the server what it supports before asking it anything else: the
+        # generation settings differ between Stash releases and the plugin is
+        # installed onto whichever one the user happens to run.
+        schema = vrstash.get_schema(stash)
+        config = vrstash.get_config(stash, schema)
         settings = vrstash.Settings((config.get("plugins") or {}).get(vrstash.PLUGIN_ID))
         vrlog.set_debug(settings.debugLog)
 
         vrmedia.resolve_binaries(config["general"], connection.get("Dir"))
 
         context = Context(
-            stash, config, settings,
+            stash, schema, config, settings,
             force=mode == "force",
             dry_run=mode == "dryrun",
         )

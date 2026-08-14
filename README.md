@@ -54,6 +54,11 @@ RUN apk add --no-cache python3
 `docker exec stash apk add --no-cache python3` works too, but does not survive recreating the
 container. Nothing beyond the standard library is needed — no pip packages.
 
+Stash's generation settings change between releases, so the plugin introspects the schema on
+startup and asks only for the settings the server actually has; anything missing falls back to
+what that version hardcoded. Tested against v0.31.1, which has no configurable marker preview
+duration and capped it at 20 seconds.
+
 #### Which scenes
 
 Scenes carrying the VR tag from **Settings → Interface → VR tag**, the same one that makes the

@@ -66,36 +66,118 @@ class Stash:
             return response.read()
 
 
-CONFIG_QUERY = """
+SCHEMA_QUERY = """
+query InzVrSchema {
+  cfg: __type(name: "ConfigGeneralResult") { fields { name } }
+  scene: __type(name: "Scene") { fields { name } }
+  marker: __type(name: "SceneMarker") { fields { name } }
+}
+"""
+
+# Everything the plugin would like to know about the server's generation
+# settings. Stash gains and renames these between releases and the plugin is
+# installed from an index onto whatever version someone happens to run, so the
+# query is assembled from whichever of them the server actually has and the
+# rest fall back to the documented defaults.
+WANTED_CONFIG_FIELDS = (
+    "generatedPath",
+    "ffmpegPath",
+    "ffprobePath",
+    "videoFileNamingAlgorithm",
+    "parallelTasks",
+    "previewPreset",
+    "previewSegments",
+    "previewSegmentDuration",
+    "previewExcludeStart",
+    "previewExcludeEnd",
+    "previewAudio",
+    "maxMarkerPreviewDuration",
+    "defaultMarkerPreviewDuration",
+    "spriteScreenshotSize",
+    "useCustomSpriteInterval",
+    "spriteInterval",
+    "minimumSprites",
+    "maximumSprites",
+    "transcodeInputArgs",
+    "transcodeOutputArgs",
+)
+
+# Without generatedPath there is nowhere to write, so that one is not optional.
+REQUIRED_CONFIG_FIELDS = ("generatedPath",)
+
+
+class Schema:
+    """Which optional fields this particular Stash understands."""
+
+    def __init__(self, config_fields, scene_fields, marker_fields):
+        self.config_fields = config_fields
+        self.scene_fields = scene_fields
+        self.marker_fields = marker_fields
+
+        missing = [f for f in REQUIRED_CONFIG_FIELDS if f not in config_fields]
+        if missing:
+            raise StashError(
+                "this stash does not expose %s — it is too old for this plugin"
+                % ", ".join(missing)
+            )
+
+        self.config_selection = [f for f in WANTED_CONFIG_FIELDS if f in config_fields]
+        skipped = [f for f in WANTED_CONFIG_FIELDS if f not in config_fields]
+        if skipped:
+            vrlog.debug(
+                "this stash has no %s, using the defaults for them" % ", ".join(skipped)
+            )
+
+        self.has_custom_fields = "custom_fields" in scene_fields
+        self.has_marker_end = "end_seconds" in marker_fields
+
+    @property
+    def config_query(self):
+        return """
 query InzVrConfig {
   configuration {
-    general {
-      generatedPath
-      ffmpegPath
-      ffprobePath
-      videoFileNamingAlgorithm
-      parallelTasks
-      previewPreset
-      previewSegments
-      previewSegmentDuration
-      previewExcludeStart
-      previewExcludeEnd
-      previewAudio
-      maxMarkerPreviewDuration
-      defaultMarkerPreviewDuration
-      spriteScreenshotSize
-      useCustomSpriteInterval
-      spriteInterval
-      minimumSprites
-      maximumSprites
-      transcodeInputArgs
-      transcodeOutputArgs
-    }
+    general { %s }
     ui
     plugins(include: ["%s"])
   }
 }
-""" % PLUGIN_ID
+""" % ("\n      ".join(self.config_selection), PLUGIN_ID)
+
+    @property
+    def scene_fragment(self):
+        optional = []
+        if self.has_custom_fields:
+            optional.append("custom_fields")
+        marker_fields = "id seconds end_seconds" if self.has_marker_end else "id seconds"
+        return """
+fragment InzVrScene on Scene {
+  id
+  title
+  %s
+  files { path size mod_time width height duration frame_rate }
+  paths { sprite }
+  tags { id name }
+  scene_markers { %s }
+}
+""" % ("\n  ".join(optional), marker_fields)
+
+    @property
+    def scenes_query(self):
+        return SCENES_QUERY_BODY + self.scene_fragment
+
+    @property
+    def scenes_by_id_query(self):
+        return SCENES_BY_ID_BODY + self.scene_fragment
+
+
+def get_schema(stash):
+    data = stash.call(SCHEMA_QUERY)
+
+    def names(key):
+        node = data.get(key) or {}
+        return {field["name"] for field in (node.get("fields") or [])}
+
+    return Schema(names("cfg"), names("scene"), names("marker"))
 
 TAG_QUERY = """
 query InzVrTags($names: [String!]) {
@@ -106,19 +188,7 @@ query InzVrTags($names: [String!]) {
 }
 """
 
-SCENE_FRAGMENT = """
-fragment InzVrScene on Scene {
-  id
-  title
-  custom_fields
-  files { path size mod_time width height duration frame_rate }
-  paths { sprite }
-  tags { id name }
-  scene_markers { id seconds end_seconds }
-}
-"""
-
-SCENES_QUERY = """
+SCENES_QUERY_BODY = """
 query InzVrScenes($include: [ID!], $exclude: [ID!], $page: Int!, $per: Int!) {
   findScenes(
     scene_filter: { tags: { value: $include, excludes: $exclude, modifier: INCLUDES, depth: -1 } }
@@ -128,16 +198,16 @@ query InzVrScenes($include: [ID!], $exclude: [ID!], $page: Int!, $per: Int!) {
     scenes { ...InzVrScene }
   }
 }
-""" + SCENE_FRAGMENT
+"""
 
-SCENES_BY_ID_QUERY = """
+SCENES_BY_ID_BODY = """
 query InzVrScenesById($ids: [ID!]) {
   findScenes(ids: $ids, filter: { per_page: -1 }) {
     count
     scenes { ...InzVrScene }
   }
 }
-""" + SCENE_FRAGMENT
+"""
 
 ALL_HASHES_QUERY = """
 query InzVrAllHashes($page: Int!, $per: Int!) {
@@ -155,8 +225,8 @@ mutation InzVrSceneUpdate($input: SceneUpdateInput!) {
 """
 
 
-def get_config(stash):
-    return stash.call(CONFIG_QUERY)["configuration"]
+def get_config(stash, schema):
+    return stash.call(schema.config_query)["configuration"]
 
 
 def resolve_tag_ids(stash, names):
@@ -176,13 +246,13 @@ def resolve_tag_ids(stash, names):
     return ids
 
 
-def iter_scenes(stash, include_ids, exclude_ids, limit=0, per_page=100):
+def iter_scenes(stash, schema, include_ids, exclude_ids, limit=0, per_page=100):
     """Page through the VR scenes, yielding (total_count, scene)."""
     page = 1
     seen = 0
     while True:
         result = stash.call(
-            SCENES_QUERY,
+            schema.scenes_query,
             {"include": include_ids, "exclude": exclude_ids, "page": page, "per": per_page},
         )["findScenes"]
         total = result["count"]
@@ -199,8 +269,8 @@ def iter_scenes(stash, include_ids, exclude_ids, limit=0, per_page=100):
         page += 1
 
 
-def scenes_by_id(stash, ids):
-    result = stash.call(SCENES_BY_ID_QUERY, {"ids": ids})["findScenes"]
+def scenes_by_id(stash, schema, ids):
+    result = stash.call(schema.scenes_by_id_query, {"ids": ids})["findScenes"]
     return result["scenes"]
 
 
