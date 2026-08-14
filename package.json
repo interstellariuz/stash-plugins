@@ -4,9 +4,10 @@
   "private": true,
   "license": "AGPL-3.0",
   "scripts": {
-    "build": "npm run build:inzDateSelect",
+    "build": "npm run build:inzDateSelect && npm run build:inzVrPreview",
     "package": "node scripts/package.mjs",
-    "build:inzDateSelect": "tsc -p inzDateSelect && sass --no-source-map inzDateSelect/src/inzDateSelect.scss inzDateSelect/dist/inzDateSelect/inzDateSelect.css && cpx \"inzDateSelect/src/*.yml\" inzDateSelect/dist/inzDateSelect && cpx \"inzDateSelect/src/manifest\" inzDateSelect/dist/inzDateSelect"
+    "build:inzDateSelect": "tsc -p inzDateSelect && sass --no-source-map inzDateSelect/src/inzDateSelect.scss inzDateSelect/dist/inzDateSelect/inzDateSelect.css && cpx \"inzDateSelect/src/*.yml\" inzDateSelect/dist/inzDateSelect && cpx \"inzDateSelect/src/manifest\" inzDateSelect/dist/inzDateSelect",
+    "build:inzVrPreview": "cpx \"inzVrPreview/src/*.py\" inzVrPreview/dist/inzVrPreview && cpx \"inzVrPreview/src/*.yml\" inzVrPreview/dist/inzVrPreview && cpx \"inzVrPreview/src/manifest\" inzVrPreview/dist/inzVrPreview"
   },
   "devDependencies": {
     "@types/react": "^18.2.31",

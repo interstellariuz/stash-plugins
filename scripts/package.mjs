@@ -70,8 +70,13 @@ function packOne({ id, dir }, date, stamp) {
   // Files go in at the zip root: installPackage writes each entry to
   // <plugins>/<id>/<name in zip>, so a nested folder would be duplicated.
   // The manifest is left out because Stash writes its own on install.
+  // Directories are skipped rather than packed: addLocalFile would turn one
+  // into a bare entry, and build by-products like __pycache__ have no business
+  // being installed.
   const zip = new AdmZip();
-  const files = readdirSync(dir).filter((f) => f !== "manifest");
+  const files = readdirSync(dir).filter(
+    (f) => f !== "manifest" && statSync(join(dir, f)).isFile()
+  );
 
   for (const file of files) {
     zip.addLocalFile(join(dir, file));

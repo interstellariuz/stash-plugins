@@ -1,0 +1,17 @@
+id: inzVrPreview
+name: INZ VR Preview
+metadata:
+  description: Rebuilds previews, scrubber sprites, marker previews and covers for VR scenes from a single eye, so they stop showing a squashed stereo pair.
+version: 1.0.0
+date: "2026-08-14 00:00:00"
+requires: []
+source_repository: ""
+files:
+- inzVrPreview.py
+- inzVrPreview.yml
+- vrartifacts.py
+- vrlayout.py
+- vrlog.py
+- vrmedia.py
+- vrstash.py
+- vrstate.py

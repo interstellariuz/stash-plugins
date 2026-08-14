@@ -1,0 +1,115 @@
+name: INZ VR Preview
+description: Rebuilds previews, scrubber sprites, marker previews and covers for VR scenes from a single eye, so they stop showing a squashed stereo pair.
+version: 1.0.0
+interface: raw
+errLog: error
+exec:
+  - python3
+  - "{pluginDir}/inzVrPreview.py"
+
+tasks:
+  - name: Process VR scenes
+    description: Rebuild artifacts for every VR-tagged scene that is missing them or whose files Stash has since overwritten.
+    defaultArgs:
+      mode: process
+  - name: Process VR scenes (force)
+    description: Rebuild everything for every VR-tagged scene, ignoring what was generated before.
+    defaultArgs:
+      mode: force
+  - name: Dry run
+    description: Report what a normal run would rebuild, without writing anything.
+    defaultArgs:
+      mode: dryrun
+  - name: Detect layouts only
+    description: Work out and cache the stereo layout of each VR scene, logging the raw similarity scores. Use this to calibrate the detection thresholds before a full run.
+    defaultArgs:
+      mode: detect
+  - name: Prune state
+    description: Forget scenes that no longer exist and delete leftover temporary files.
+    defaultArgs:
+      mode: prune
+
+settings:
+  vrTagName:
+    displayName: VR tag
+    description: Tag marking a scene as VR. Leave empty to use the VR tag from Settings > Interface, the same one that shows the player's VR button.
+    type: STRING
+  extraTagNames:
+    displayName: Additional VR tags
+    description: Comma-separated extra tags to treat as VR.
+    type: STRING
+  excludeTagNames:
+    displayName: Excluded tags
+    description: Comma-separated tags to leave alone even when they carry a VR tag.
+    type: STRING
+
+  layoutDetection:
+    displayName: Layout detection
+    description: How to tell side-by-side from over-under. One of auto, filename, content, aspect. Empty means auto, which combines all three.
+    type: STRING
+  layoutSamples:
+    displayName: Detection samples
+    description: How many frames to compare when detecting the layout from the picture. 0 uses the default of 7.
+    type: NUMBER
+  stereoThreshold:
+    displayName: Stereo threshold
+    description: How alike two halves must be to count as a stereo pair. 0 uses the default of 0.75. Lower it if VR scenes are being reported as flat.
+    type: NUMBER
+  layoutMargin:
+    displayName: Layout margin
+    description: Gap required between the two axes when both look stereo. 0 uses the default of 0.06.
+    type: NUMBER
+
+  useSecondEye:
+    displayName: Use the right or bottom eye
+    description: Take the second eye instead of the first. The left or top eye is used by default.
+    type: BOOLEAN
+  dewarp:
+    displayName: Flatten the projection
+    description: Reproject the eye to an ordinary rectilinear frame, so previews look like normal 2D video instead of a wide-angle bulge. Slower.
+    type: BOOLEAN
+  dewarpHFov:
+    displayName: Flattened field of view
+    description: Horizontal field of view in degrees for the flattened frame. 0 uses the default of 104.
+    type: NUMBER
+  dewarpAspect:
+    displayName: Flattened aspect ratio
+    description: Width divided by height of the flattened frame. 0 uses the default of 1.7778, which is 16:9.
+    type: NUMBER
+  defaultProjection:
+    displayName: Default projection
+    description: Source projection to assume when the filename does not say. One of auto, hequirect, equirect, fisheye190, fisheye200, fisheye220. Only matters when flattening.
+    type: STRING
+
+  skipPreview:
+    displayName: Skip the preview video
+    type: BOOLEAN
+  skipWebp:
+    displayName: Skip the animated preview
+    type: BOOLEAN
+  skipSprite:
+    displayName: Skip the scrubber sprite
+    type: BOOLEAN
+  skipMarkers:
+    displayName: Skip marker previews
+    type: BOOLEAN
+  skipCover:
+    displayName: Skip the scene cover
+    type: BOOLEAN
+
+  maxWorkers:
+    displayName: Scenes at once
+    description: How many scenes to process concurrently. 0 follows the Parallel Tasks setting.
+    type: NUMBER
+  ffmpegThreads:
+    displayName: ffmpeg threads
+    description: Threads per ffmpeg process. 0 uses the default of 4, which is what Stash uses.
+    type: NUMBER
+  sceneLimit:
+    displayName: Scene limit
+    description: Stop after this many scenes. 0 processes all of them. Useful for a first trial run.
+    type: NUMBER
+  debugLog:
+    displayName: Verbose logging
+    description: Log every command and decision, including the raw similarity scores.
+    type: BOOLEAN
