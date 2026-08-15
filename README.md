@@ -62,9 +62,11 @@ preview duration and capped it at 20 seconds.
 #### Which scenes
 
 Scenes carrying the VR tag from **Settings → Interface → VR tag**, the same one that makes the
-player's VR button appear. Override it with the `vrTagName` setting, add more with
-`extraTagNames`, and opt individual scenes out with `excludeTagNames`. Tags are matched by name,
-ignoring case; child tags count too.
+player's VR button appear. Add more with `extraTagNames` and opt individual scenes out with
+`excludeTagNames`. Tags are matched by name, ignoring case; child tags count too.
+
+A run can be narrowed further to particular folders or to a handful of scene ids — see
+[Running it](#running-it).
 
 #### Which eye
 
@@ -94,6 +96,17 @@ the thresholds can be checked against a real library before committing to a full
 picture cannot be read at all the scene falls back to its shape, and says so in a warning — that
 is the one path that can misjudge a mono 360 file, which has the same 2:1 shape as a stereo pair.
 
+When nothing identifies the layout at all — no filename token, no readable picture, and a shape
+that says nothing either — the scene is treated as **side-by-side** rather than left alone, with a
+warning naming the file. Anything reaching that point carries a VR tag, and side-by-side is what
+nearly all of them are, so guessing beats leaving a squashed stereo pair in the grid. This only
+ever applies for want of evidence: a picture that *was* read and came back flat is a verdict, and
+such a scene stays `mono` and untouched.
+
+A run started from a selection in the scene list is the one case where the tag cannot be taken for
+granted — Stash ignores the tag filter once a query names scene ids — so those scenes are checked
+against the configured tags first, and an untagged one is left as `mono` rather than guessed at.
+
 `stereoThreshold`, `layoutMargin` and `dewarpAspect` are text fields rather than number fields.
 Stash's number input runs the value through `parseInt`, so `0.75` would arrive as `0`; as text the
 fraction survives. `dewarpAspect` also accepts `16:9`.
@@ -107,8 +120,23 @@ and it is noticeably slower.
 
 #### Running it
 
-There is no post-generation hook in Stash, so this cannot run automatically. The workflow is: run
-Stash's normal Generate, then use **Settings → Tasks → Plugin Tasks**:
+There is no post-generation hook in Stash, so nothing here happens on its own. There are three
+ways to start a run.
+
+**Alongside a normal Generate.** The plugin adds one switch, *Rebuild VR artifacts from one eye*,
+to the bottom of Stash's own Generate dialog — wherever it is opened from: **Settings → Tasks**,
+the `…` menu over selected scenes, or a scene's own page. With it on, the VR pass is queued
+immediately behind the generation, over the same scenes, the same folders and the same artifacts
+that were ticked for Stash. The task queue runs one job at a time, so the second starts as the
+first finishes.
+
+**From the dialog.** *Generate VR…* sits under this plugin's tasks in **Settings → Tasks → Plugin
+Tasks**, and asks for everything a run needs: which artifacts to rebuild, whether to overwrite,
+which folders to restrict it to, a scene limit, and whether to log verbosely. Folders are picked
+with the same directory browser Stash uses.
+
+**As a plain task.** The buttons in **Settings → Tasks → Plugin Tasks** take no options and act on
+every VR-tagged scene:
 
 | Task                        | Effect                                                        |
 | --------------------------- | ------------------------------------------------------------- |
@@ -117,6 +145,9 @@ Stash's normal Generate, then use **Settings → Tasks → Plugin Tasks**:
 | Dry run                     | Report what would change, write nothing                        |
 | Detect layouts only         | Cache each scene's layout and log the raw scores               |
 | Prune state                 | Forget deleted scenes, sweep leftover temporary files          |
+
+Folders are matched as a substring of the file's path, not as a strict parent directory, so
+`\vr\studio` selects everything under it and anything else whose path contains that text.
 
 A normal Stash Generate does **not** clobber these files — every generator early-returns when its
 output already exists. Only a run with *overwrite* enabled replaces them, and the plugin notices
@@ -140,6 +171,15 @@ finished, so an interrupted run resumes instead of starting over.
 - The preview is retried with slow seek when fast seek fails, and switches to `-vsync 2` for a
   file reporting a nonsense frame rate — both of which Stash's own preview task does, and without
   which a handful of files that Stash can preview would come back as failures here.
+- Scenes are processed as many at a time as the server's **Parallel Tasks** setting allows, with
+  four ffmpeg threads each — the same budget Stash spends on its own generation.
+- Upgrading to the version that added the side-by-side fallback re-runs layout detection once, so
+  that scenes previously written off as `mono` for want of evidence are reconsidered. That pass
+  samples the picture again but does not re-encode: only the scenes whose verdict actually moved
+  are rebuilt.
+- Stash gives a plugin task no way to ask for anything, so the dialog and the switch are a small
+  UI script shipped inside the same plugin. Nothing depends on it — every task still works with
+  the UI half disabled, just without the options.
 
 ## Development
 

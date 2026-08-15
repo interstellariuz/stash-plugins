@@ -13,6 +13,10 @@ import vrlog
 
 PLUGIN_ID = "inzVrPreview"
 
+# Threads per ffmpeg process. Stash hardcodes 4 in pkg/scene/generate, and there
+# is no reason to disagree with it, so this is a constant rather than a setting.
+FFMPEG_THREADS = 4
+
 
 class StashError(Exception):
     pass
@@ -235,9 +239,12 @@ query InzVrTags($page: Int!, $per: Int!) {
 """
 
 SCENES_QUERY_BODY = """
-query InzVrScenes($include: [ID!], $exclude: [ID!], $page: Int!, $per: Int!) {
+query InzVrScenes($include: [ID!], $exclude: [ID!], $path: StringCriterionInput, $page: Int!, $per: Int!) {
   findScenes(
-    scene_filter: { tags: { value: $include, excludes: $exclude, modifier: INCLUDES, depth: -1 } }
+    scene_filter: {
+      tags: { value: $include, excludes: $exclude, modifier: INCLUDES, depth: -1 }
+      path: $path
+    }
     filter: { page: $page, per_page: $per, sort: "id", direction: ASC }
   ) {
     scenes { ...InzVrScene }
@@ -298,14 +305,18 @@ def resolve_tag_ids(stash, names, per_page=1000):
     return ids
 
 
-def iter_scenes(stash, schema, include_ids, exclude_ids, limit=0, per_page=100):
-    """Page through the VR scenes."""
+def iter_scenes(stash, schema, include_ids, exclude_ids, path=None, limit=0, per_page=100):
+    """Page through the VR scenes, optionally only those under one path."""
+    criterion = {"value": path, "modifier": "INCLUDES"} if path else None
     page = 1
     seen = 0
     while True:
         scenes = stash.call(
             schema.scenes_query,
-            {"include": include_ids, "exclude": exclude_ids, "page": page, "per": per_page},
+            {
+                "include": include_ids, "exclude": exclude_ids, "path": criterion,
+                "page": page, "per": per_page,
+            },
         )["findScenes"]["scenes"]
         if not scenes:
             return
@@ -334,10 +345,15 @@ def iter_all_scene_paths(stash, per_page=500):
         page += 1
 
 
+# Only things that describe the library live here. Anything that describes one
+# run — which artifacts to build, how many scenes to take, how loudly to log —
+# is an argument of the task instead, the way Stash asks for its own generation
+# options when the task is started rather than in a config page.
+#
 # Stash has no concept of a default value for a plugin setting: an unset
-# setting is simply absent, and the UI writes 0 / false / "" for a cleared
-# one. So every default has to be expressible as "the falsy value means use
-# the default", which is why the artifact toggles are phrased as skipX.
+# setting is simply absent, and the UI writes 0 / false / "" for a cleared one.
+# So every default has to be expressible as "the falsy value means use the
+# default".
 #
 # NUMBER is whole numbers only. Stash's NumberSetting field runs the typed
 # value through Number.parseInt, so "0.75" reaches the plugin as 0 and
@@ -345,7 +361,6 @@ def iter_all_scene_paths(stash, per_page=500):
 # one are declared STRING in the manifest and parsed here; _FRACTIONS lists
 # them, since the type of the default no longer says so.
 DEFAULTS = {
-    "vrTagName": "",
     "extraTagNames": "",
     "excludeTagNames": "",
     "layoutDetection": "auto",
@@ -361,15 +376,6 @@ DEFAULTS = {
     "dewarpHFov": 104,
     "dewarpAspect": "16:9",
     "defaultProjection": "auto",
-    "skipPreview": False,
-    "skipWebp": False,
-    "skipSprite": False,
-    "skipMarkers": False,
-    "skipCover": False,
-    "maxWorkers": 0,
-    "ffmpegThreads": 4,
-    "sceneLimit": 0,
-    "debugLog": False,
 }
 
 _CHOICES = {
@@ -457,7 +463,7 @@ class Settings:
 
     def tag_names(self, ui_vr_tag):
         include = [n.strip() for n in self.extraTagNames.split(",")]
-        include.insert(0, self.vrTagName or ui_vr_tag or "")
+        include.insert(0, ui_vr_tag or "")
         return [n for n in include if n]
 
     def exclude_names(self):
@@ -473,7 +479,6 @@ class Settings:
         "dewarpHFov",
         "dewarpAspect",
         "defaultProjection",
-        "ffmpegThreads",
     )
     _DETECT_KEYS = (
         "layoutDetection",
@@ -483,16 +488,28 @@ class Settings:
         "defaultProjection",
     )
 
-    def _digest(self, keys):
+    # Values folded into a digest alongside the settings themselves. ffmpegThreads
+    # used to be a setting and its removal would otherwise shift every render
+    # fingerprint, re-encoding whole libraries for nothing; kept at the number
+    # the default carried, an existing state file still matches. The fallback
+    # entry is the opposite case, put here deliberately: the layout given to a
+    # scene nothing could be read from has changed, so cached verdicts have to
+    # be reached again.
+    _RENDER_EXTRAS = {"ffmpegThreads": FFMPEG_THREADS}
+    _DETECT_EXTRAS = {"fallback": "sbs"}
+
+    def _digest(self, keys, extras):
         import hashlib
 
-        blob = json.dumps({k: getattr(self, k) for k in keys}, sort_keys=True)
+        values = dict(extras)
+        values.update({k: getattr(self, k) for k in keys})
+        blob = json.dumps(values, sort_keys=True)
         return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
     def render_fingerprint(self):
         """Digest of the settings that change the generated bytes."""
-        return self._digest(self._RENDER_KEYS)
+        return self._digest(self._RENDER_KEYS, self._RENDER_EXTRAS)
 
     def detect_fingerprint(self):
         """Digest of the settings that change which layout a scene is given."""
-        return self._digest(self._DETECT_KEYS)
+        return self._digest(self._DETECT_KEYS, self._DETECT_EXTRAS)

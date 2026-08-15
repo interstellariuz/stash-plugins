@@ -43,15 +43,93 @@ def _or_default(value, default):
     return default if value is None else value
 
 
+def _flag(args, key):
+    """A boolean argument, whether it arrived as JSON or as a defaultArgs string.
+
+    args_map carries real types, but a task's defaultArgs are strings only, so
+    "false" has to mean what it says rather than merely being non-empty.
+    """
+    value = args.get(key)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _number(args, key):
+    try:
+        return max(0, int(float(args.get(key) or 0)))
+    except (TypeError, ValueError):
+        vrlog.warning("%s=%r is not a number, ignoring it" % (key, args.get(key)))
+        return 0
+
+
+def _string_list(args, key):
+    """A list argument, sent either as a JSON list or as one item per line."""
+    value = args.get(key)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.splitlines()
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+# Argument name -> the artifact it turns on. These deliberately match the field
+# names of Stash's own GenerateMetadataInput, so the UI can hand the options a
+# person ticked in the Generate dialog straight through to us.
+ARTIFACT_ARGS = (
+    ("covers", "cover"),
+    ("previews", "preview"),
+    ("imagePreviews", "webp"),
+    ("sprites", "sprite"),
+    ("markers", "markers"),
+)
+
+
+class RunOptions:
+    """What this particular run was asked to do.
+
+    Everything here describes one invocation rather than the library, so it
+    arrives as task arguments — from a task's defaultArgs, or from the plugin's
+    own dialog through args_map — instead of living in the settings.
+    """
+
+    def __init__(self, args):
+        self.mode = str(args.get("mode") or "process").strip()
+        self.overwrite = _flag(args, "overwrite")
+        self.force = self.mode == "force" or self.overwrite
+        self.dry_run = self.mode == "dryrun"
+        self.detect_only = self.mode == "detect"
+        self.verbose = _flag(args, "verbose")
+        self.limit = _number(args, "limit")
+        self.paths = _string_list(args, "paths")
+
+        ids = args.get("sceneIds")
+        if isinstance(ids, str):
+            ids = ids.replace(",", " ").split()
+        self.scene_ids = [str(i).strip() for i in (ids or []) if str(i).strip()]
+
+        # Nothing asked for means everything, which is what a run with no
+        # arguments at all did before the artifacts became selectable.
+        self.wanted = {name for arg, name in ARTIFACT_ARGS if _flag(args, arg)}
+        if not self.wanted:
+            self.wanted = {name for _, name in ARTIFACT_ARGS}
+
+    @property
+    def known_mode(self):
+        return self.mode in ("process", "force", "dryrun", "detect", "prune")
+
+
 class Context:
     """Everything a worker needs, resolved once at startup."""
 
-    def __init__(self, stash, schema, config, settings, force, dry_run):
+    def __init__(self, stash, schema, config, settings, options):
         self.stash = stash
         self.schema = schema
         self.settings = settings
-        self.force = force
-        self.dry_run = dry_run
+        self.run_options = options
+        self.force = options.force
+        self.dry_run = options.dry_run
+        self.wanted = options.wanted
         self.ui = config.get("ui") or {}
 
         general = config["general"]
@@ -87,12 +165,16 @@ class Context:
             "maximum_sprites": general.get("maximumSprites") or 500,
             "input_args": list(general.get("transcodeInputArgs") or []),
             "output_args": list(general.get("transcodeOutputArgs") or []),
-            "threads": settings.ffmpegThreads,
+            "threads": vrstash.FFMPEG_THREADS,
             "tmp_dir": tmp_dir,
             "still_width": 1920,
             "cover_at": 0,
             "timeout": None,
         }
+
+        # Filled in by collect_scenes, and only consulted for a run that named
+        # its scenes outright — see _fallback_allowed.
+        self.vr_tag_names = set()
 
         self.render_fingerprint = settings.render_fingerprint()
         self.detect_fingerprint = settings.detect_fingerprint()
@@ -163,14 +245,18 @@ def process_scene(context, scene, run_progress):
 
         layout = record.get("layout")
         projection = record.get("projection")
+        signal = record.get("signal")
         if not layout:
-            layout, projection, detail = vrlayout.decide(scene, video_file, probe, settings)
+            layout, projection, detail = vrlayout.decide(
+                scene, video_file, probe, settings, _fallback_allowed(context, scene)
+            )
+            signal = detail.get("signal")
             vrlog.info("%s: %s (%s)" % (label, layout, _describe(detail)))
             progress.step("detect")
 
         context.tally(layout if layout in ("sbs", "tb") else "mono")
         if layout == vrlayout.MONO:
-            _remember(context, digest, scene, layout, projection, signature, record)
+            _remember(context, digest, scene, layout, projection, signal, signature, record)
             raise Skip("not stereo, leaving it alone")
 
         geometry = vrlayout.Geometry(layout, projection, probe["width"], probe["height"], settings)
@@ -178,7 +264,7 @@ def process_scene(context, scene, run_progress):
         # scene with nothing to do still records the verdict it just reached —
         # otherwise a retuned threshold would re-probe every up-to-date scene
         # on every subsequent run.
-        _remember(context, digest, scene, layout, projection, signature, record)
+        _remember(context, digest, scene, layout, projection, signal, signature, record)
         artifacts = record.setdefault("artifacts", {})
 
         todo = _outstanding(context, digest, scene, artifacts)
@@ -221,12 +307,15 @@ def _describe(detail):
     return " ".join(parts)
 
 
-def _remember(context, digest, scene, layout, projection, signature, record, save=True):
+def _remember(context, digest, scene, layout, projection, signal, signature, record, save=True):
     """Stamp a verdict onto the record so the next run does not probe again."""
     record.update({
         "scene_id": scene.get("id"),
         "layout": layout,
         "projection": projection,
+        # Kept so a cached verdict can say how it was reached — which matters
+        # for the ones that fell back rather than being read off the picture.
+        "signal": signal,
         "source": signature,
         "detect": context.detect_fingerprint,
         "render": context.render_fingerprint,
@@ -237,7 +326,7 @@ def _remember(context, digest, scene, layout, projection, signature, record, sav
 
 def _outstanding(context, digest, scene, artifacts):
     """Which artifacts are missing, or no longer the ones we wrote."""
-    settings, paths = context.settings, context.paths
+    wanted, paths = context.wanted, context.paths
     todo = set()
 
     def check(name, path):
@@ -245,21 +334,21 @@ def _outstanding(context, digest, scene, artifacts):
             return
         todo.add(name)
 
-    if not settings.skipPreview:
+    if "preview" in wanted:
         check("preview", paths.preview(digest))
-    if not settings.skipWebp:
+    if "webp" in wanted:
         check("webp", paths.webp(digest))
-    if not settings.skipSprite:
+    if "sprite" in wanted:
         check("sprite", paths.sprite(digest))
         check("thumbs", paths.thumbs(digest))
-    if not settings.skipMarkers and scene.get("scene_markers"):
+    if "markers" in wanted and scene.get("scene_markers"):
         for marker in scene["scene_markers"]:
             for extension in ("mp4", "webp", "jpg"):
                 check(
                     "marker_%s_%s" % (int(float(marker.get("seconds") or 0)), extension),
                     paths.marker(digest, marker.get("seconds") or 0, extension),
                 )
-    if not settings.skipCover and "cover" not in artifacts:
+    if "cover" in wanted and "cover" not in artifacts:
         todo.add("cover")
 
     # The sprite image and its vtt describe each other, so they are rebuilt as
@@ -340,20 +429,37 @@ def _build(context, scene, digest, source, geometry, probe, artifacts, todo, pro
             context.tally(name)
 
 
-def collect_scenes(context, args):
+def _fallback_allowed(context, scene):
+    """Whether a scene may be guessed at when nothing identifies its layout.
+
+    Guessing side-by-side is only defensible for something already declared to
+    be VR. A tag-scoped run is all VR by construction; one that named its scenes
+    outright — a selection in the scene list, say — is not, so those are checked
+    against the configured tags. findScenes ignores scene_filter once ids are
+    given, so this cannot be pushed onto the server.
+    """
+    if not context.run_options.scene_ids or not context.vr_tag_names:
+        return True
+    return any(
+        (tag.get("name") or "").casefold() in context.vr_tag_names
+        for tag in (scene.get("tags") or [])
+    )
+
+
+def collect_scenes(context, options):
     """The scenes to consider, either an explicit list or everything VR-tagged."""
     stash, settings = context.stash, context.settings
-    raw_ids = str(args.get("sceneIds") or "").strip()
-    if raw_ids:
-        ids = [part.strip() for part in raw_ids.replace(",", " ").split() if part.strip()]
-        return vrstash.scenes_by_id(stash, context.schema, ids)
-
     ui_tag = (context.ui or {}).get("vrTag")
     names = settings.tag_names(ui_tag)
+    context.vr_tag_names = {name.casefold() for name in names}
+
+    if options.scene_ids:
+        return vrstash.scenes_by_id(stash, context.schema, options.scene_ids)
+
     if not names:
         raise RuntimeError(
             "no VR tag configured — set one in Settings > Interface > VR tag, "
-            "or in this plugin's vrTagName setting"
+            "or add one to this plugin's extraTagNames setting"
         )
     include = vrstash.resolve_tag_ids(stash, names)
     if not include:
@@ -361,9 +467,26 @@ def collect_scenes(context, args):
     exclude = vrstash.resolve_tag_ids(stash, settings.exclude_names())
 
     vrlog.info("looking for scenes tagged %s" % ", ".join(names))
-    return list(
-        vrstash.iter_scenes(stash, context.schema, include, exclude, settings.sceneLimit)
-    )
+    if not options.paths:
+        return list(
+            vrstash.iter_scenes(stash, context.schema, include, exclude, limit=options.limit)
+        )
+
+    # One query per path rather than an OR chain: OR in SceneFilterType composes
+    # the whole sibling group, so { tags: T, path: a, OR: { path: b } } would
+    # drop the tag constraint from the second branch. A handful of extra round
+    # trips is nothing next to getting that wrong.
+    vrlog.info("restricted to %s" % ", ".join(options.paths))
+    seen, scenes = set(), []
+    for path in options.paths:
+        for scene in vrstash.iter_scenes(stash, context.schema, include, exclude, path=path):
+            if scene["id"] in seen:
+                continue
+            seen.add(scene["id"])
+            scenes.append(scene)
+            if options.limit and len(scenes) >= options.limit:
+                return scenes
+    return scenes
 
 
 def prune(context):
@@ -386,26 +509,22 @@ def prune(context):
     return {"state_removed": removed, "temp_removed": swept}
 
 
-def run(context, args, detect_only):
-    scenes = collect_scenes(context, args)
+def run(context, options):
+    scenes = collect_scenes(context, options)
     if not scenes:
         return {"scenes": 0, "message": "no VR scenes matched"}
 
     vrlog.info("%d scene(s) to consider" % len(scenes))
     run_progress = vrlog.Progress(len(scenes))
 
-    workers = context.settings.maxWorkers or context.parallel_tasks
-    workers = max(1, min(int(workers), 16))
-    if not detect_only and workers * context.settings.ffmpegThreads > 2 * (os.cpu_count() or 4):
-        vrlog.warning(
-            "%d workers x %d ffmpeg threads will oversubscribe this machine"
-            % (workers, context.settings.ffmpegThreads)
-        )
+    # Follows the server's Parallel Tasks setting, the same budget Stash spends
+    # on its own generation.
+    workers = max(1, min(int(context.parallel_tasks), 16))
     vrlog.info("using %d worker(s)" % workers)
 
     # Threads rather than processes: every unit of work is an ffmpeg call, so
     # the GIL is released for the whole of it.
-    work = _detect_only if detect_only else process_scene
+    work = _detect_only if options.detect_only else process_scene
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(lambda s: work(context, s, run_progress), scenes))
 
@@ -425,14 +544,16 @@ def _detect_only(context, scene, run_progress):
             raise Skip("no readable video file")
 
         probe = vrmedia.probe(video_file["path"])
-        layout, projection, detail = vrlayout.decide(scene, video_file, probe, context.settings)
+        layout, projection, detail = vrlayout.decide(
+            scene, video_file, probe, context.settings, _fallback_allowed(context, scene)
+        )
         vrlog.info("%s: %s/%s (%s)" % (label, layout, projection, _describe(detail)))
         context.tally(layout if layout in ("sbs", "tb") else "mono")
 
         if not context.dry_run:
             record = context.store.load(digest)
             _remember(
-                context, digest, scene, layout, projection,
+                context, digest, scene, layout, projection, detail.get("signal"),
                 vrstate.source_signature(video_file, probe), record,
             )
     except Skip as exc:
@@ -452,8 +573,11 @@ def main():
         print(json.dumps({"error": "could not parse the plugin input: %s" % exc}))
         return
 
-    args = payload.get("args") or {}
-    mode = args.get("mode") or "process"
+    options = RunOptions(payload.get("args") or {})
+    vrlog.set_debug(options.verbose)
+    if not options.known_mode:
+        print(json.dumps({"error": "unknown mode %r" % options.mode}))
+        return
 
     try:
         connection = payload.get("server_connection") or {}
@@ -464,22 +588,20 @@ def main():
         schema = vrstash.get_schema(stash)
         config = vrstash.get_config(stash, schema)
         settings = vrstash.Settings((config.get("plugins") or {}).get(vrstash.PLUGIN_ID))
-        vrlog.set_debug(settings.debugLog)
 
         vrmedia.resolve_binaries(config["general"], connection.get("Dir"))
 
-        context = Context(
-            stash, schema, config, settings,
-            force=mode == "force",
-            dry_run=mode == "dryrun",
-        )
+        context = Context(stash, schema, config, settings, options)
+        vrlog.debug("run options: %s" % json.dumps({
+            "mode": options.mode, "artifacts": sorted(options.wanted),
+            "paths": options.paths, "sceneIds": options.scene_ids,
+            "limit": options.limit,
+        }))
 
-        if mode == "prune":
+        if options.mode == "prune":
             output = prune(context)
-        elif mode in ("process", "force", "dryrun", "detect"):
-            output = run(context, args, detect_only=mode == "detect")
         else:
-            raise RuntimeError("unknown mode %r" % mode)
+            output = run(context, options)
 
         vrlog.info("done: %s" % json.dumps(output))
         print(json.dumps({"error": None, "output": output}))

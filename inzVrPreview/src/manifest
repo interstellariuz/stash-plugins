@@ -7,6 +7,7 @@ date: "2026-08-14 00:00:00"
 requires: []
 source_repository: ""
 files:
+- inzVrPreview.js
 - inzVrPreview.py
 - inzVrPreview.yml
 - vrartifacts.py

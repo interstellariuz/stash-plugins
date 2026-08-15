@@ -12,6 +12,14 @@ SBS = "sbs"
 TB = "tb"
 MONO = "mono"
 
+# What a scene gets when nothing could be established: no filename token, no
+# readable picture, no usable shape. Everything here is already known to carry a
+# VR tag, and side-by-side is what the overwhelming majority of VR files are, so
+# guessing it beats leaving the scene with a squashed stereo pair for a preview.
+# This is only ever reached for want of evidence — a picture that was read and
+# came back flat is a verdict, and stays MONO.
+FALLBACK = SBS
+
 # Tokens that appear in the naming conventions DeoVR and HereSphere understand.
 # Layout and projection are separate axes: MKX200 says both "side by side" and
 # "200 degree fisheye", while a bare _180_ says only "equirectangular".
@@ -233,10 +241,16 @@ def from_content(path, width, height, duration, samples):
     return {key: statistics.median(values) for key, values in scores.items() if values}
 
 
-def decide(scene, video_file, probe, settings):
-    """Resolve a layout, returning (layout, projection, detail dict)."""
+def decide(scene, video_file, probe, settings, allow_fallback=True):
+    """Resolve a layout, returning (layout, projection, detail dict).
+
+    allow_fallback says whether this scene may be guessed at when nothing
+    identifies its layout — see FALLBACK. A scene that is not known to be VR
+    does not qualify and is left as MONO instead.
+    """
     path = video_file.get("path") or ""
     detail = {}
+    unknown = FALLBACK if allow_fallback else MONO
 
     override, projection = _manual_override(scene)
     if override:
@@ -263,9 +277,9 @@ def decide(scene, video_file, probe, settings):
     content_layout = _content_verdict(content, settings, detail)
 
     if mode == "filename":
-        layout, signal = name_layout or MONO, "filename"
+        layout, signal = (name_layout, "filename") if name_layout else (unknown, "fallback")
     elif mode == "content":
-        layout, signal = content_layout or MONO, "content"
+        layout, signal = (content_layout, "content") if content_layout else (unknown, "fallback")
     elif mode == "aspect":
         layout, signal = _from_aspect(probe), "aspect"
     elif name_layout and content_layout and name_layout != content_layout:
@@ -292,6 +306,17 @@ def decide(scene, video_file, probe, settings):
                 "pin it with the inz_vr_layout custom field if that is wrong"
                 % (os.path.basename(path), layout, probe["width"], probe["height"])
             )
+
+    # Nothing said anything: neither the name, nor the picture, nor the shape.
+    # Rather than leave a VR-tagged scene with its stereo pair squashed into
+    # every thumbnail, assume the layout nearly all of them use and say so.
+    if allow_fallback and layout == MONO and signal in ("fallback", "aspect"):
+        vrlog.warning(
+            "%s: nothing identifies the layout of this %dx%d file, assuming %s — "
+            "pin it with the inz_vr_layout custom field if that is wrong"
+            % (os.path.basename(path), probe["width"], probe["height"], FALLBACK)
+        )
+        layout, signal = FALLBACK, "fallback"
 
     detail["signal"] = signal
     return layout, _projection_for(layout, name_projection, settings), detail
