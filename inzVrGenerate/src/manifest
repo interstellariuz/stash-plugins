@@ -1,0 +1,16 @@
+id: inzVrGenerate
+name: VR Generated Content
+metadata:
+  description: Generates covers, previews, animated previews and scrubber sprites for VR scenes from a single eye, cropped to 16:9, so they stop showing a squashed stereo pair.
+version: 1.0.0
+date: "2026-08-15 00:00:00"
+requires: []
+source_repository: ""
+files:
+- inzVrGenerate.js
+- inzVrGenerate.py
+- inzVrGenerate.yml
+- vrformat.py
+- vrgen.py
+- vrlog.py
+- vrstash.py

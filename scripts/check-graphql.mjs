@@ -1,4 +1,4 @@
-// Validate every GraphQL document inzVrPreview can send against the real Stash
+// Validate every GraphQL document inzVrGenerate can send against the real Stash
 // schema, taken from a Stash source checkout.
 //
 // The plugin has already shipped two 422s from queries written by hand: one
@@ -20,12 +20,12 @@ import {
 } from "graphql";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const pluginSrc = join(root, "inzVrPreview", "src");
+const pluginSrc = join(root, "inzVrGenerate", "src");
 const stashSrc = process.env.STASH_SRC ?? join(root, "..", "stash");
 const python = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 
 // The oldest Stash this plugin claims to work on. Everything newer is covered
-// by the runtime introspection in vrstash.Schema, which only asks for the
+// by the runtime introspection in vrstash.config_query, which only asks for the
 // fields the server reports — so the old schema is the one that constrains.
 const MIN_REF = "v0.31.1";
 const REFS = [MIN_REF, "HEAD"];
@@ -71,11 +71,11 @@ function loadSchema(ref) {
   return buildSchema(sdl, { assumeValidSDL: true });
 }
 
-// The plugin builds its config query and scene fragment from whichever fields
-// the server has, so ask the plugin to build them for this schema.
+// The plugin builds its config query from whichever fields the server has, so
+// ask the plugin to build it for this schema.
 function dumpDocuments(schema) {
   const fields = {};
-  for (const name of ["ConfigGeneralResult", "Scene", "SceneMarker"]) {
+  for (const name of ["ConfigGeneralResult", "Scene"]) {
     const type = schema.getType(name);
     if (!type) throw new Error(`schema has no type ${name}`);
     fields[name] = Object.keys(type.getFields()).sort();

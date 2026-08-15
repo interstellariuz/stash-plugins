@@ -13,13 +13,7 @@ _SOH = b"\x01"
 _STX = b"\x02"
 
 _lock = threading.Lock()
-_debug_enabled = False
 _last_progress = [0.0]
-
-
-def set_debug(enabled):
-    global _debug_enabled
-    _debug_enabled = bool(enabled)
 
 
 def _log(level_char, message):
@@ -27,7 +21,7 @@ def _log(level_char, message):
     # Stash reads stderr a line at a time and looks for the level prefix at the
     # start of each one, so a multi-line message has to be tagged line by line.
     # Left alone, everything after the first newline would arrive at the
-    # plugin's errLog level instead — a debug traceback as a stack of errors.
+    # plugin's errLog level instead -- a debug traceback as a stack of errors.
     # Blank lines are dropped: detectLogLevel needs a character after the
     # prefix, and Stash ignores empty lines anyway.
     lines = [line for line in str(message).splitlines() if line.strip()] or ["(empty)"]
@@ -36,14 +30,11 @@ def _log(level_char, message):
             print(prefix + line, file=sys.stderr, flush=True)
 
 
-def trace(message):
-    if _debug_enabled:
-        _log(b"t", message)
-
-
 def debug(message):
-    if _debug_enabled:
-        _log(b"d", message)
+    # Not gated behind a verbose switch: these go out tagged as debug and the
+    # server's own log level decides whether anyone sees them, which is one
+    # fewer thing for a run to have to be told.
+    _log(b"d", message)
 
 
 def info(message):
@@ -68,23 +59,17 @@ def progress(fraction, force=False):
     _log(b"p", repr(fraction))
 
 
-WEIGHTS = {
-    "detect": 0.05,
-    "preview": 0.45,
-    "webp": 0.10,
-    "sprite": 0.30,
-    "markers": 0.07,
-    "cover": 0.03,
-}
+# How long each artifact takes relative to a whole scene. The preview dominates
+# and the cover is a single frame, so counting scenes would leave the bar
+# motionless through the only part that takes any time.
+WEIGHTS = {"cover": 0.05, "preview": 0.45, "webp": 0.10, "sprite": 0.30}
 
 
 class Progress:
-    """Whole-run progress, weighted by how long each artifact actually takes.
+    """Whole-run progress, in "scenes worth of work".
 
-    The unit is "scenes worth of work". Each artifact adds its weight, so the
-    bar keeps moving during the long preview encode instead of jumping once per
-    scene. Scenes may be processed concurrently, so the accumulator is global
-    and each worker tops its scene up to a whole unit when it finishes.
+    Scenes are processed concurrently, so the accumulator is shared and each
+    worker tops its own scene up to a whole unit when it finishes.
     """
 
     def __init__(self, total_scenes):
@@ -98,28 +83,21 @@ class Progress:
             value = self._acc / self.total
         progress(value, force=force)
 
-    def step(self, artifact):
-        self._add(WEIGHTS.get(artifact, 0.0))
-
-    def scene_done(self, credited):
-        """Credit the part of the scene that was skipped or failed."""
-        self._add(max(0.0, 1.0 - credited), force=True)
+    def scene(self):
+        return SceneProgress(self)
 
 
 class SceneProgress:
-    """Per-scene view of the run progress, tracking what has been credited."""
+    """One scene's view of the run, tracking what it has already been credited."""
 
     def __init__(self, run):
         self._run = run
         self._credited = 0.0
 
     def step(self, artifact):
-        if self._run is None:
-            return
-        self._credited += WEIGHTS.get(artifact, 0.0)
-        self._run.step(artifact)
+        weight = WEIGHTS.get(artifact, 0.0)
+        self._credited += weight
+        self._run._add(weight)
 
     def done(self):
-        if self._run is None:
-            return
-        self._run.scene_done(self._credited)
+        self._run._add(max(0.0, 1.0 - self._credited), force=True)

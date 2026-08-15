@@ -4,11 +4,11 @@
   "private": true,
   "license": "AGPL-3.0",
   "scripts": {
-    "build": "npm run build:inzDateSelect && npm run build:inzVrPreview",
+    "build": "npm run build:inzDateSelect && npm run build:inzVrGenerate",
     "package": "node scripts/package.mjs",
     "check:graphql": "node scripts/check-graphql.mjs",
     "build:inzDateSelect": "tsc -p inzDateSelect && sass --no-source-map inzDateSelect/src/inzDateSelect.scss inzDateSelect/dist/inzDateSelect/inzDateSelect.css && cpx \"inzDateSelect/src/*.yml\" inzDateSelect/dist/inzDateSelect && cpx \"inzDateSelect/src/manifest\" inzDateSelect/dist/inzDateSelect",
-    "build:inzVrPreview": "tsc -p inzVrPreview && cpx \"inzVrPreview/src/*.py\" inzVrPreview/dist/inzVrPreview && cpx \"inzVrPreview/src/*.yml\" inzVrPreview/dist/inzVrPreview && cpx \"inzVrPreview/src/manifest\" inzVrPreview/dist/inzVrPreview"
+    "build:inzVrGenerate": "tsc -p inzVrGenerate && cpx \"inzVrGenerate/src/*.py\" inzVrGenerate/dist/inzVrGenerate && cpx \"inzVrGenerate/src/*.yml\" inzVrGenerate/dist/inzVrGenerate && cpx \"inzVrGenerate/src/manifest\" inzVrGenerate/dist/inzVrGenerate"
   },
   "devDependencies": {
     "@types/react": "^18.2.31",

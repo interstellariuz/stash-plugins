@@ -1,0 +1,32 @@
+name: VR Generated Content
+description: Generates covers, previews, animated previews and scrubber sprites for VR scenes from a single eye, cropped to 16:9, so they stop showing a squashed stereo pair.
+version: 1.0.0
+interface: raw
+errLog: error
+exec:
+  - python3
+  - "{pluginDir}/inzVrGenerate.py"
+
+ui:
+  javascript:
+    - inzVrGenerate.js
+
+# One task, because runPluginTask needs a name to call and PluginTasks only
+# lists plugins that have at least one. The UI half replaces this plugin's block
+# in Settings > Tasks with a Generate / Selective Generate pair that carries the
+# options, so this button is not normally seen. Its defaultArgs are what it does
+# when it is -- with the UI disabled, everything for every scene.
+tasks:
+  - name: Generate
+    description: Generate supporting image, sprite, video, vtt and other files.
+    defaultArgs:
+      covers: "true"
+      previews: "true"
+      imagePreviews: "true"
+      sprites: "true"
+      format: auto
+
+# No settings. Which artifacts to build, which scenes to cover, which VR format
+# to assume and whether to overwrite all describe one run rather than the
+# library, so they are asked for when the run is started -- the same way Stash
+# asks for its own generation options.

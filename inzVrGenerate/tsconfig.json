@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist/inzVrPreview",
+    "outDir": "dist/inzVrGenerate",
     "rootDir": "src"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
