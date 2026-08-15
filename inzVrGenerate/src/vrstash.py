@@ -208,10 +208,19 @@ def scenes_by_id(stash, ids):
 def iter_scenes(stash, path=None, per_page=100):
     """Page through every scene, or every scene whose path contains `path`.
 
-    Matching is a substring of the whole path rather than a strict parent
-    directory, which is also how Stash's own selective generate behaves.
+    The value is wrapped in quotes because an unquoted path criterion is split
+    on whitespace and the words are OR'd together -- getPathSearchClauseMany,
+    "used for backwards compatibility for the includes/excludes modifiers". A
+    folder called `D:\\My Videos` would otherwise match every scene with "my" or
+    "videos" anywhere in its path, which is most of a library. Trimming the
+    quotes back off and matching the remainder as one phrase is that function's
+    own escape hatch, and behaves the same on every release the plugin supports.
+
+    Even quoted this is a substring of the whole path rather than a parent
+    directory, so `/videos` still brings back `/videos.old`; the caller checks
+    what comes back.
     """
-    criterion = {"value": path, "modifier": "INCLUDES"} if path else None
+    criterion = {"value": '"%s"' % path, "modifier": "INCLUDES"} if path else None
     page = 1
     while True:
         scenes = stash.call(

@@ -187,13 +187,25 @@ def scene_hash(scene):
     return match.group(1) if match else None
 
 
+def scene_path(scene):
+    """The file this scene is generated from: its primary one.
+
+    Stash prepends the primary file to the rest (filesRepository.getMany), so it
+    is the first, and it is the only one any of this applies to -- the hash the
+    artifacts are named after is the primary file's.
+    """
+    files = scene.get("files") or []
+    return (files[0].get("path") if files else None) or ""
+
+
 def process_scene(context, scene, progress):
     step = progress.scene()
-    label = scene.get("title") or "scene %s" % scene.get("id")
+    source = scene_path(scene)
+    # Falling back to the filename rather than the id, the way the UI does: a
+    # log full of "scene 41" says nothing about where the run has got to.
+    label = scene.get("title") or os.path.basename(source) or "scene %s" % scene.get("id")
 
     try:
-        files = scene.get("files") or []
-        source = (files[0].get("path") if files else None) or ""
         if not source:
             raise Skip("no video file")
 
@@ -225,6 +237,7 @@ def process_scene(context, scene, progress):
 
         vrlog.info("%s: %s, rebuilding %s"
                    % (label, geometry.describe(), ", ".join(sorted(todo))))
+        vrlog.debug("%s: %s" % (label, source))
         _build(context, scene, digest, source, geometry, info, todo, step, label)
         context.tally("processed")
 
@@ -302,6 +315,33 @@ def _build(context, scene, digest, source, geometry, info, todo, step, label):
         step.step("sprite")
 
 
+def _prefixes(path, folder):
+    folder = os.path.normcase(os.path.normpath(folder))
+    path = os.path.normcase(os.path.normpath(path))
+    return path == folder or path.startswith(folder + os.sep)
+
+
+def is_under(path, folder):
+    """Whether `path` sits inside `folder`.
+
+    The plugin runs on the server, so os.path agrees with the filesystem these
+    paths came from about separators and about whether case matters.
+    """
+    if not path or not folder:
+        return False
+    if _prefixes(path, folder):
+        return True
+    # Resolved as a fallback rather than up front, because it is the answer to a
+    # different question: a folder picked through a symlink or a bind mount --
+    # ordinary enough in a container -- is the same place under another name,
+    # and dropping everything the server matched would be worse than the cost of
+    # a stat.
+    try:
+        return _prefixes(os.path.realpath(path), os.path.realpath(folder))
+    except OSError:
+        return False
+
+
 def collect_scenes(context, options):
     """The scenes to consider: an explicit list, some folders, or everything."""
     stash = context.stash
@@ -317,19 +357,48 @@ def collect_scenes(context, options):
     # what it looks like. A handful of extra round trips is nothing next to
     # getting that wrong.
     vrlog.info("restricted to %s" % ", ".join(options.paths))
-    seen, scenes = set(), []
-    for path in options.paths:
-        for scene in vrstash.iter_scenes(stash, path=path):
-            if scene["id"] not in seen:
-                seen.add(scene["id"])
-                scenes.append(scene)
+    seen, scenes, stray = set(), [], set()
+
+    for folder in options.paths:
+        for scene in vrstash.iter_scenes(stash, path=folder):
+            if scene["id"] in seen:
+                continue
+            # The server matches a path criterion as a substring of the whole
+            # path, so a folder brings back its own siblings -- /d/Videos also
+            # answers for /d/Videos.old -- and a scene is matched on any of its
+            # files while only the primary one is ever generated from. Neither
+            # is what someone picking a folder means, and both would show up as
+            # the plugin generating somewhere they did not ask for.
+            source = scene_path(scene)
+            if not is_under(source, folder):
+                stray.add(scene["id"])
+                vrlog.debug("outside %s, left alone: %s" % (folder, source))
+                continue
+            seen.add(scene["id"])
+            stray.discard(scene["id"])
+            scenes.append(scene)
+
+    if stray:
+        vrlog.info("%d scene(s) matched the folder name without being in it, left alone"
+                   % len(stray))
+    vrlog.info("%d scene(s) under %s" % (len(scenes), ", ".join(options.paths)))
     return scenes
 
 
 def run(context, options):
     scenes = collect_scenes(context, options)
     if not scenes:
-        return {"scenes": 0, "message": "no scenes matched"}
+        if options.paths:
+            # Worth saying out loud: the folders have to be the server's own,
+            # spelled the way the server spells them. A path typed by hand -- a
+            # host path for a stash in a container, or /d/Videos for a stash on
+            # Windows -- matches nothing and would otherwise be a silent no-op.
+            message = ("nothing under %s -- these have to be paths as this stash sees them"
+                       % ", ".join(options.paths))
+        else:
+            message = "no scenes matched"
+        vrlog.warning(message)
+        return {"scenes": 0, "message": message}
 
     vrlog.info("%d scene(s) to consider" % len(scenes))
     progress = vrlog.Progress(len(scenes))

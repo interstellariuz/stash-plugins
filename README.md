@@ -73,6 +73,18 @@ VR…* — it sits directly under *Generate…*.
 **Generated Content** section above it: *Generate* covers the whole library, *Selective
 Generate…* opens the folder picker first, and the switches underneath apply to both.
 
+A folder means that folder and what is inside it, nothing else. Stash's path filter is a
+substring of the whole path and, unquoted, is split on whitespace and OR'd word by word — so
+`/d/My Videos` would come back as everything matching `%my%` or `%videos%`, which for most
+libraries is all of it. The criterion is sent quoted, and what comes back is checked against the
+folder before anything is encoded; anything the server matched that turns out to sit elsewhere is
+counted in one log line. Symlinked and bind-mounted folders still work: a path that does not
+match directly is compared again resolved.
+
+The folders are the **server's** — as Stash sees them, which for a container means the paths
+inside it, the ones the picker offers. A path typed by hand that no scene sits under ends the run
+with a message saying so rather than quietly doing nothing.
+
 The dialog is Stash's Generate dialog with the parts this plugin does not do left out. Transcodes,
 video perceptual hashes and interactive heatmaps are absent — they read the whole frame anyway,
 so run Stash's own Generate for those. Marker previews, marker animated previews and marker
