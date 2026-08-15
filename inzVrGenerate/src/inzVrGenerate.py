@@ -204,6 +204,7 @@ def process_scene(context, scene, progress):
     # Falling back to the filename rather than the id, the way the UI does: a
     # log full of "scene 41" says nothing about where the run has got to.
     label = scene.get("title") or os.path.basename(source) or "scene %s" % scene.get("id")
+    started = False
 
     try:
         if not source:
@@ -238,7 +239,8 @@ def process_scene(context, scene, progress):
         vrlog.info("%s: %s, rebuilding %s"
                    % (label, geometry.describe(), ", ".join(sorted(todo))))
         vrlog.debug("%s: %s" % (label, source))
-        _build(context, scene, digest, source, geometry, info, todo, step, label)
+        started = True
+        _build(context, scene, digest, source, geometry, info, todo, step)
         context.tally("processed")
 
     except Skip as exc:
@@ -249,6 +251,10 @@ def process_scene(context, scene, progress):
         vrlog.error("%s: %s" % (label, exc))
         vrlog.debug(traceback.format_exc())
     finally:
+        # Also after a failure: a scene that blew up is no longer in flight
+        # either, and the readout has no other way to learn that.
+        if started:
+            vrlog.finished(source)
         step.done()
 
 
@@ -277,11 +283,11 @@ def _outstanding(context, digest):
     return todo
 
 
-def _build(context, scene, digest, source, geometry, info, todo, step, label):
+def _build(context, scene, digest, source, geometry, info, todo, step):
     paths, options = context.paths, context.options
 
     if "cover" in todo:
-        vrlog.debug("%s: cover" % label)
+        vrlog.generating("cover", source)
         vrstash.set_cover(
             context.stash, scene["id"],
             vrgen.generate_cover(source, geometry, options, info),
@@ -291,7 +297,7 @@ def _build(context, scene, digest, source, geometry, info, todo, step, label):
 
     preview_path = paths.preview(digest)
     if "preview" in todo:
-        vrlog.debug("%s: preview" % label)
+        vrlog.generating("preview", source)
         vrgen.generate_preview(source, geometry, preview_path, options, info)
         context.tally("preview")
         step.step("preview")
@@ -301,13 +307,13 @@ def _build(context, scene, digest, source, geometry, info, todo, step, label):
         # PreviewWebp does. There is always one by this point: the animated
         # preview is only ever wanted alongside the video one, so either it was
         # just encoded or it was already there.
-        vrlog.debug("%s: animated preview" % label)
+        vrlog.generating("webp", source)
         vrgen.generate_webp(preview_path, paths.webp(digest), options)
         context.tally("webp")
         step.step("webp")
 
     if "sprite" in todo:
-        vrlog.debug("%s: sprite and vtt" % label)
+        vrlog.generating("sprite", source)
         vrgen.generate_sprite(
             source, geometry, paths.sprite(digest), paths.thumbs(digest), options, info
         )

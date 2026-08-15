@@ -49,6 +49,29 @@ def error(message):
     _log(b"e", message)
 
 
+# Worded like the descriptions Stash puts on its own generate subtasks, so a VR
+# run reads the same as a native one -- and so the plugin's UI can pick these
+# lines back out of the log stream, which is the only channel it has for saying
+# what is going on. Change one of these and change the pattern in the tsx.
+_ARTIFACT_TEXT = {
+    "cover": "cover",
+    "preview": "preview",
+    "webp": "animated preview",
+    "sprite": "sprites",
+}
+
+
+def generating(artifact, path):
+    info("Generating %s for %s" % (_ARTIFACT_TEXT.get(artifact, artifact), path))
+
+
+def finished(path):
+    # Stash has no equivalent -- it drops the subtask instead -- but a readout
+    # built from a log has to be told, or a scene sits on it after its last
+    # artifact is written.
+    info("Finished generating for %s" % path)
+
+
 def progress(fraction, force=False):
     fraction = min(max(0.0, float(fraction)), 1.0)
     now = time.monotonic()

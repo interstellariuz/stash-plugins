@@ -90,6 +90,19 @@ video perceptual hashes and interactive heatmaps are absent — they read the wh
 so run Stash's own Generate for those. Marker previews, marker animated previews and marker
 screenshots are shown but disabled: not implemented yet.
 
+A first run offers previews, scrubber sprites and the side-by-side format — the two artifacts a
+squashed stereo frame ruins most visibly, and the layout most VR files are in. After that it
+offers whatever was last used: the switches are remembered the way Stash remembers its own, in the
+server's UI config, so they follow the library rather than the browser and both the dialog and the
+tasks page always agree. *Override preview generation options* is the one exception and is asked
+for fresh each time, since it describes a single run.
+
+While a run is going, the job queue names it — *Generate as VR for 12 scenes* — and the plugin's
+own block on the Tasks page lists what each worker is on, a line per scene, the same wording
+Stash's generation uses. That readout is rebuilt from the log stream because a plugin cannot write
+into the job row itself, so treat it as a status light: the progress bar is the accurate measure
+and the log is the accurate record.
+
 #### Which format
 
 `auto` reads the format out of the filename, matching the naming conventions DeoVR and HereSphere
