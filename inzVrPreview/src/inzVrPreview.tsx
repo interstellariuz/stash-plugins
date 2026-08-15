@@ -8,8 +8,9 @@
  *
  * Two ways in:
  *
- *   - a switch inside Stash's own Generate dialog, so a normal generation is
- *     followed by ours over exactly the same scenes and artifacts;
+ *   - a switch inside Stash's own Generate dialog, which runs ours over exactly
+ *     the scenes and artifacts chosen there, either after Stash's generation or
+ *     in place of it;
  *   - a "Generate VR…" button under the plugin's tasks in Settings > Tasks,
  *     which opens the full dialog and runs the plugin on its own.
  */
@@ -133,28 +134,51 @@ interface IPluginApi {
    * Riding along with Stash's own Generate
    * ------------------------------------------------------------------ */
 
-  // Whether the switch in the Generate dialog is on. Module scope rather than
-  // component state because the dialog is unmounted the moment it is submitted,
-  // and because the choice should survive being reopened.
+  // State of the two controls added to the Generate dialog. Module scope rather
+  // than component state because the dialog is unmounted the moment it is
+  // submitted, and because the choice should survive being reopened.
   let rideAlong = false;
+  let vrOnly = false;
 
   const VrGenerateSwitch: React.FC = () => {
-    const BooleanSetting = PluginApi.components.BooleanSetting;
+    const { Setting, BooleanSetting } = PluginApi.components;
     const [checked, setChecked] = React.useState(rideAlong);
+    const [only, setOnly] = React.useState(vrOnly);
 
     if (!BooleanSetting) return null;
 
     return (
-      <BooleanSetting
-        id="inz-vr-preview-ride-along"
-        heading="Rebuild VR artifacts from one eye"
-        subHeading="Queues INZ VR Preview straight after this generation, over the same scenes and the same artifacts."
-        checked={checked}
-        onChange={(v: boolean) => {
-          rideAlong = v;
-          setChecked(v);
-        }}
-      />
+      <>
+        <BooleanSetting
+          id="inz-vr-preview-ride-along"
+          heading="Rebuild VR artifacts from one eye"
+          subHeading="Runs INZ VR Preview over the same scenes and the same artifacts that are ticked above."
+          checked={checked}
+          onChange={(v: boolean) => {
+            rideAlong = v;
+            setChecked(v);
+          }}
+        />
+        {checked && Setting ? (
+          <Setting
+            heading="VR pass"
+            subHeading="Only the VR pass understands a stereo frame, so generating both means encoding everything twice — once squashed, once cropped."
+          >
+            <Form.Control
+              className="input-control"
+              as="select"
+              value={only ? "only" : "after"}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                vrOnly = e.currentTarget.value === "only";
+                setOnly(vrOnly);
+              }}
+            >
+              <option value="after">After Stash's own generation</option>
+              <option value="only">Instead of it — VR only</option>
+            </Form.Control>
+          </Setting>
+        ) : null}
+      </>
     );
   };
 
@@ -207,22 +231,92 @@ interface IPluginApi {
     return payload?.variables?.input ?? null;
   }
 
+  // Everything this plugin rebuilds itself, and everything only Stash can make.
+  // "VR only" means dropping the first set from Stash's request, not dropping
+  // the request: someone who ticked phashes alongside previews still wants them.
+  const VR_HANDLED = [
+    "covers",
+    "sprites",
+    "previews",
+    "imagePreviews",
+    "markers",
+    "markerImagePreviews",
+    "markerScreenshots",
+  ];
+
+  const STASH_ONLY = [
+    "transcodes",
+    "forceTranscodes",
+    "phashes",
+    "interactiveHeatmapsSpeeds",
+    "imagePhashes",
+    "imageThumbnails",
+    "clipPreviews",
+  ];
+
+  // The same request with the VR artifacts taken out, or null when that would
+  // leave Stash with nothing to do and the request can be dropped entirely.
+  function withoutVrArtifacts(body: string): string | null {
+    const payload = JSON.parse(body);
+    const input = { ...payload.variables.input };
+    for (const key of VR_HANDLED) delete input[key];
+    if (!STASH_ONLY.some((key) => input[key])) return null;
+    payload.variables.input = input;
+    return JSON.stringify(payload);
+  }
+
+  // A reply the caller of MetadataGenerate cannot tell from the server's, so
+  // that "VR only" still closes the dialog and reports a queued job. The field
+  // name is the mutation's, unaliased, and its type is a plain ID.
+  function fakeGenerateReply(payload: Record<string, unknown>) {
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Runs our task in place of Stash's generation. Nothing else travels on this
+  // request — createUploadLink sends one operation per request, with no batching
+  // (createClient.ts) — so swallowing it drops only the generation itself.
+  async function generateVrInstead(vrArgs: IVrArgs) {
+    try {
+      const data = await runVrTask(vrArgs);
+      return fakeGenerateReply({
+        data: { metadataGenerate: String(data?.runPluginTask ?? "") },
+      });
+    } catch (e) {
+      // Shaped like a GraphQL error so Apollo rejects and the dialog shows it,
+      // rather than silently reporting a job that was never queued.
+      return fakeGenerateReply({
+        errors: [{ message: (e as Error)?.message ?? "could not queue the VR task" }],
+      });
+    }
+  }
+
   // Stash has no post-generation hook, and neither GenerateDialog nor
   // mutateMetadataGenerate is patchable, so the only way to notice the dialog
-  // being submitted is to watch the request go past. This observes and never
-  // alters: the original response is returned untouched, and if Apollo ever
+  // being submitted is to watch the request go past. Every request but a
+  // submitted MetadataGenerate is passed through untouched, and if Apollo ever
   // stops going through the global fetch the switch simply stops doing
   // anything, leaving the standalone dialog below unaffected.
   window.fetch = function (this: unknown, ...args: Parameters<typeof fetch>) {
-    const response = rawFetch(...args);
-
     try {
       if (rideAlong) {
-        const input = readGenerateInput((args[1] as RequestInit | undefined)?.body);
+        const init = args[1] as RequestInit | undefined;
+        const input = readGenerateInput(init?.body);
         const vrArgs = input ? vrArgsFromGenerate(input) : null;
+
         if (vrArgs) {
-          // Only once the generation is actually queued: the task queue runs one
-          // job at a time, so ours lands directly behind it.
+          // VR only: hand Stash whatever is left after our artifacts are taken
+          // out, and nothing at all if that is empty.
+          const trimmed = vrOnly
+            ? withoutVrArtifacts(init!.body as string)
+            : (init!.body as string);
+          if (trimmed === null) return generateVrInstead(vrArgs);
+
+          const response = rawFetch(args[0], { ...init, body: trimmed });
+          // Ours is queued only once Stash's job is: the queue runs one job at a
+          // time, so it lands directly behind whatever was asked for.
           response
             .then((result) => {
               if (result.ok) return runVrTask(vrArgs);
@@ -230,13 +324,14 @@ interface IPluginApi {
             .catch(() => {
               /* the generate call reports its own failure */
             });
+          return response;
         }
       }
     } catch {
       /* never let the observer break a request */
     }
 
-    return response;
+    return rawFetch(...args);
   } as typeof fetch;
 
   /* ------------------------------------------------------------------ *

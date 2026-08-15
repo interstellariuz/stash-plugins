@@ -123,12 +123,23 @@ and it is noticeably slower.
 There is no post-generation hook in Stash, so nothing here happens on its own. There are three
 ways to start a run.
 
-**Alongside a normal Generate.** The plugin adds one switch, *Rebuild VR artifacts from one eye*,
-to the bottom of Stash's own Generate dialog — wherever it is opened from: **Settings → Tasks**,
-the `…` menu over selected scenes, or a scene's own page. With it on, the VR pass is queued
-immediately behind the generation, over the same scenes, the same folders and the same artifacts
-that were ticked for Stash. The task queue runs one job at a time, so the second starts as the
-first finishes.
+**From Stash's own Generate dialog.** The plugin adds a switch, *Rebuild VR artifacts from one
+eye*, to the bottom of that dialog — wherever it is opened from: **Settings → Tasks**, the `…` menu
+over selected scenes, or a single scene's own `…` menu. Whichever scenes, folders and artifacts
+were chosen for Stash are what the VR pass gets, so this is also how a run is aimed at one scene.
+
+Turning the switch on reveals a second control, *VR pass*, with two choices:
+
+| Choice                          | Effect                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| After Stash's own generation    | Both run, ours second — the queue is serial, so it starts as the first finishes |
+| Instead of it — **VR only**     | Stash's generation is not queued at all; only the VR pass runs           |
+
+*VR only* is usually what a VR scene wants. Stash builds from the whole stereo frame and this
+plugin then rebuilds the same artifacts from one eye, so running both encodes everything twice and
+throws the first result away. Only the overlapping artifacts are taken away from Stash: phashes,
+transcodes, interactive heatmaps and the rest of what this plugin does not touch are still
+generated normally, in a job of their own ahead of the VR pass.
 
 **From the dialog.** *Generate VR…* sits under this plugin's tasks in **Settings → Tasks → Plugin
 Tasks**, and asks for everything a run needs: which artifacts to rebuild, whether to overwrite,
