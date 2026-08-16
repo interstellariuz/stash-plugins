@@ -181,6 +181,12 @@ Stash made — which is the thing being fixed.
 - Stash gives a plugin task no way to ask for anything, so the dialogs and the menu entries are a
   UI script shipped inside the same plugin. Nothing depends on it: with the UI half disabled the
   plain **Generate** task still works, and generates everything for every scene.
+- The UI reuses Stash's own wording wherever Stash has some. The strings that are this plugin's
+  own — the title, the format select and its options, the tasks-page blurb — are English, but each
+  has a message id under `inzVrGenerate.`, so a `custom-locales.json` entry with the same id
+  replaces it exactly as it would one of Stash's. The ids are the keys of the `TEXT` table at the
+  top of [inzVrGenerate.tsx](inzVrGenerate/src/inzVrGenerate.tsx). The job-queue description is
+  deliberately left out: the plugin recognises its own jobs by it.
 
 ## Development
 
