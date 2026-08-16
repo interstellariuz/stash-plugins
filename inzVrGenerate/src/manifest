@@ -5,7 +5,7 @@ metadata:
 version: 1.0.0
 date: "2026-08-15 00:00:00"
 requires: []
-source_repository: ""
+source_repository: "https://interstellariuz.github.io/stash-plugins/index.yml"
 files:
 - inzVrGenerate.js
 - inzVrGenerate.py

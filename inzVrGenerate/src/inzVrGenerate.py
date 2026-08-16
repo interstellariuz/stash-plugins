@@ -147,7 +147,6 @@ class Context:
             "output_args": list(general.get("transcodeOutputArgs") or []),
             "threads": vrstash.FFMPEG_THREADS,
             "tmp_dir": self.paths.tmp,
-            "timeout": None,
         }
         self._apply_preview_overrides(options.preview_overrides)
 
@@ -225,16 +224,23 @@ def process_scene(context, scene, progress):
                 "choose one instead of Auto to generate it anyway"
             )
 
-        info = vrgen.probe(source)
-        if not info["width"] or not info["height"]:
-            raise Skip("could not read the frame size")
-
-        geometry = vrformat.Geometry(fmt, info["width"], info["height"])
+        # Before the probe, not after it: probing is a process per scene, while
+        # this is three stats. A second run over a library that is already
+        # generated would otherwise spend hours starting ffprobe to find out it
+        # has nothing to do. The format is resolved first even so -- it is a
+        # handful of string compares, and it keeps a 2D file's "no VR format in
+        # the filename" message from being replaced by "up to date".
         todo = _outstanding(context, digest)
         if not todo:
             context.tally("skipped")
             vrlog.debug("%s: up to date" % label)
             return
+
+        info = vrgen.probe(source)
+        if not info["width"] or not info["height"]:
+            raise Skip("could not read the frame size")
+
+        geometry = vrformat.Geometry(fmt, info["width"], info["height"])
 
         vrlog.info("%s: %s, rebuilding %s"
                    % (label, geometry.describe(), ", ".join(sorted(todo))))
@@ -424,6 +430,11 @@ def run(context, options):
 
 
 def main():
+    vrlog.setup()
+    # Before anything is started: on Windows this is what takes the ffmpegs down
+    # with us when stash stops the plugin.
+    vrgen.guard_child_processes()
+
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError as exc:

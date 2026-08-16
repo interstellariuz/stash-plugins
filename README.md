@@ -50,6 +50,11 @@ format the video is in.
 introspects the schema on startup and asks only for the settings the server actually has;
 anything missing falls back to what that version hardcoded.
 
+**Python 3**, found by Stash rather than by the plugin: it looks for `python3`, then `python`, then
+whatever *Settings → System → Python executable path* is set to. Nothing beyond the standard library
+is needed — no pip packages. Same for `ffmpeg` and `ffprobe`: the plugin resolves them exactly as
+Stash does, so it encodes with the binaries the rest of the library was generated with.
+
 The official `stashapp/stash` image is Alpine with `ffmpeg` but **no Python**, so add it:
 
 ```dockerfile
@@ -58,7 +63,10 @@ RUN apk add --no-cache python3
 ```
 
 `docker exec stash apk add --no-cache python3` works too, but does not survive recreating the
-container. Nothing beyond the standard library is needed — no pip packages.
+container.
+
+Windows and bare-metal Linux installations work the same way; on Windows, a Python that is not on
+`PATH` only needs the executable path filled in under Settings → System.
 
 #### Running it
 

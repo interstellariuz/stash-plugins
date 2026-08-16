@@ -7,11 +7,14 @@ every non-VR scene in the same library and have to behave identically in the UI.
 """
 
 import base64
+import ctypes
 import json
 import math
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -24,6 +27,25 @@ FFPROBE = "ffprobe"
 # unreadable media or a stalled network mount, and one such file must not hold
 # up the whole run.
 PROBE_TIMEOUT = 120
+
+# ffmpeg has no way of saying that it is stuck rather than slow, so every call
+# gets a budget instead: large enough that a healthy encode on slow storage
+# finishes, small enough that one unreadable file cannot hold a worker for the
+# rest of the run. Most of these are fixed, because most of the work is bounded
+# by -frames:v or by -t rather than by how long the file is.
+PREVIEW_TIMEOUT = 600.0        # one preview chunk
+PREVIEW_ENCODE_FACTOR = 20.0   # ...unless someone set a very long segment
+STILL_TIMEOUT = 300.0          # cover: a single frame, fast seek only
+WEBP_TIMEOUT = 300.0           # re-encodes the finished preview, seconds long
+CONCAT_TIMEOUT = 300.0         # stream copy of the chunks
+MONTAGE_TIMEOUT = 600.0        # tiles the captured cells into one jpeg
+CELL_TIMEOUT = 120.0           # sprite cell, fast seek
+
+# The one call that really does cost in proportion to where it lands: the sprite
+# cell's retry seeks after the input, so ffmpeg decodes the file from the start
+# to the timestamp. The factor assumes it manages at least twice real time.
+SEEK_TIMEOUT_FACTOR = 0.5
+CELL_SLOW_TIMEOUT_MAX = 600.0
 
 PREVIEW_WIDTH = 640
 PREVIEW_AUDIO_BITRATE = "128k"
@@ -72,6 +94,155 @@ class FfmpegError(Exception):
     pass
 
 
+class FfmpegTimeout(FfmpegError):
+    """Told apart from a failure: a retry that decodes more cannot rescue it."""
+
+
+def _budget(floor, seconds, cap=None):
+    """A timeout for a call that has to decode `seconds` of the source."""
+    try:
+        scaled = float(seconds or 0.0) * SEEK_TIMEOUT_FACTOR
+    except (TypeError, ValueError):
+        scaled = 0.0
+    value = max(float(floor), scaled)
+    return min(value, float(cap)) if cap else value
+
+
+# --------------------------------------------------------------------------
+# keeping ffmpeg from outliving us
+# --------------------------------------------------------------------------
+
+# Stash stops a plugin with a hard kill -- SIGKILL on POSIX, TerminateProcess on
+# Windows -- so there is no signal to handle and no chance to tidy up. Left
+# alone, up to parallel_tasks encoders carry on burning CPU and filling the
+# scratch directory with nobody to collect them. Both halves below hand that job
+# to the OS instead.
+
+_PR_SET_PDEATHSIG = 1
+
+
+def _resolve_prctl():
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        # dlopen(NULL) rather than a named libc: the plugin's own platform is
+        # alpine, where the library is libc.musl-$arch.so.1 and "libc.so.6" does
+        # not exist at all.
+        return ctypes.CDLL(None, use_errno=True).prctl
+    except (OSError, AttributeError):
+        return None
+
+
+_PRCTL = _resolve_prctl()
+
+
+def _preexec():
+    """The preexec_fn for one spawn, or None where prctl is not available.
+
+    The pid is read here, in the live process, rather than once at import: a
+    death signal is only as good as knowing who it is for, and a pid captured at
+    import belongs to whoever imported the module.
+    """
+    if _PRCTL is None:
+        return None
+
+    parent = os.getpid()
+
+    def die_with_parent():
+        # Runs in the child between fork and exec. Deliberately two calls and
+        # nothing else: this side of a fork from a process with a worker pool in
+        # it, anything that takes a lock can deadlock. The call's own timeout is
+        # what bounds that if it ever happens.
+        _PRCTL(_PR_SET_PDEATHSIG, signal.SIGKILL)
+        # The plugin may have died while we were forking, in which case the
+        # signal has already been and gone. Check by hand rather than linger as
+        # exactly the orphan this exists to prevent.
+        if os.getppid() != parent:
+            os._exit(1)
+
+    return die_with_parent
+
+
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JobObjectExtendedLimitInformation = 9
+_job_handle = None
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_ulonglong) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_size_t),  # ULONG_PTR
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", _IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def guard_child_processes():
+    """Put this process in a job object that takes its children down with it.
+
+    Windows only, and the Windows half of what PR_SET_PDEATHSIG does elsewhere.
+    A child joins its parent's job automatically, so every ffmpeg started later
+    is in this one without run() having to know; when stash terminates the
+    plugin, the last handle to the job closes and KILL_ON_JOB_CLOSE ends the
+    whole tree. Nested jobs work from Windows 8 on, so a stash that is itself in
+    one is fine. Best effort: a failure here costs cleanliness, not the run.
+    """
+    global _job_handle
+    if os.name != "nt" or _job_handle is not None:
+        return
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObject failed")
+
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+                job, _JobObjectExtendedLimitInformation,
+                ctypes.byref(info), ctypes.sizeof(info)):
+            raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
+
+        if not kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess()):
+            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+
+        # Held for the life of the process on purpose: closing this handle is
+        # the very event the job is configured to react to.
+        _job_handle = job
+        vrlog.debug("child processes will be killed with this one")
+    except Exception as exc:
+        vrlog.debug("could not guard child processes: %s" % exc)
+
+
 # --------------------------------------------------------------------------
 # running ffmpeg
 # --------------------------------------------------------------------------
@@ -79,20 +250,36 @@ class FfmpegError(Exception):
 def resolve_binaries(config_general, stash_dir):
     """Locate ffmpeg/ffprobe the same way Stash does.
 
-    Stash prefers its configured path, then the copy it downloads next to
-    config.yml, then PATH.
+    RefreshFFMpeg (internal/manager/init.go) takes the configured path if there
+    is one, and otherwise calls ResolveFFMpeg(configDirectory, stashHomeDir):
+    the directory config.yml lives in -- which is exactly the Dir stash sends a
+    plugin -- then PATH, then ~/.stash, where the copy it downloads for itself
+    ends up. The same order is followed here so the plugin encodes with the
+    binary the rest of the library was generated with.
     """
     global FFMPEG, FFPROBE
 
+    # The plugin is a child of the server, so ~ is the server's own home.
+    home = os.path.join(os.path.expanduser("~"), ".stash")
+
+    def within(directory, name):
+        if not directory:
+            return []
+        # Both spellings, in that order, because os.path.isfile("...\\ffmpeg")
+        # is false on Windows while shutil.which finds ffmpeg.exe by itself.
+        return [os.path.join(directory, name), os.path.join(directory, name + ".exe")]
+
     def pick(configured, name):
-        candidates = [configured]
-        if stash_dir:
-            candidates.append(os.path.join(stash_dir, name))
-            candidates.append(os.path.join(stash_dir, name + ".exe"))
-        for candidate in candidates:
+        for candidate in [configured] + within(stash_dir, name):
             if candidate and os.path.isfile(candidate):
                 return candidate
-        return shutil.which(name)
+        found = shutil.which(name)
+        if found:
+            return found
+        for candidate in within(home, name):
+            if os.path.isfile(candidate):
+                return candidate
+        return None
 
     FFMPEG = pick(config_general.get("ffmpegPath"), "ffmpeg")
     FFPROBE = pick(config_general.get("ffprobePath"), "ffprobe")
@@ -102,8 +289,12 @@ def resolve_binaries(config_general, stash_dir):
     vrlog.debug("using ffmpeg=%s ffprobe=%s" % (FFMPEG, FFPROBE))
 
 
-def run(args, stdin_data=None, capture_stdout=False, timeout=None):
+def run(args, timeout, stdin_data=None, capture_stdout=False):
     """Run ffmpeg, returning stdout when asked for it.
+
+    The timeout is required rather than defaulted: an unbounded ffmpeg holds its
+    worker for the rest of the run, so a call site that has not thought about
+    its budget should not compile away into one.
 
     stdin is closed off unless we are piping frames in. ffmpeg reads stdin for
     interactive keystrokes, and the stdin this process inherits is the pipe
@@ -120,9 +311,10 @@ def run(args, stdin_data=None, capture_stdout=False, timeout=None):
             stderr=subprocess.PIPE,
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
+            preexec_fn=_preexec(),
         )
     except subprocess.TimeoutExpired as exc:
-        raise FfmpegError("ffmpeg timed out after %ss" % exc.timeout) from exc
+        raise FfmpegTimeout("ffmpeg timed out after %ss" % exc.timeout) from exc
 
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace")
@@ -142,9 +334,11 @@ def probe(path, timeout=PROBE_TIMEOUT):
             stderr=subprocess.PIPE,
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
+            preexec_fn=_preexec(),
         )
     except subprocess.TimeoutExpired as exc:
-        raise FfmpegError("ffprobe timed out after %ss for %s" % (exc.timeout, path)) from exc
+        raise FfmpegTimeout(
+            "ffprobe timed out after %ss for %s" % (exc.timeout, path)) from exc
 
     if proc.returncode != 0:
         detail = proc.stderr.decode("utf-8", "replace")[:300]
@@ -302,8 +496,8 @@ def generate_cover(source, geometry, options, info):
          "-frames:v", "1", "-q:v", "2",
          "-vf", geometry.vf(width=min(geometry.width, STILL_WIDTH)),
          "-f", "image2pipe", "-c:v", "mjpeg", "-"],
+        timeout=STILL_TIMEOUT,
         capture_stdout=True,
-        timeout=options["timeout"],
     )
     if not data:
         raise FfmpegError("cover frame was empty")
@@ -397,6 +591,11 @@ def generate_preview(source, geometry, target, options, info):
     """The preview video, retried with slow seek exactly as Stash retries it."""
     try:
         return _preview_attempt(source, geometry, target, options, info, fallback=False)
+    except FfmpegTimeout:
+        # Not retried: the fallback moves part of the seek after the input so
+        # ffmpeg decodes into position, which is strictly more work than the
+        # attempt that has just run out of time.
+        raise
     except FfmpegError as exc:
         vrlog.warning("preview failed (%s), retrying with slow seek" % _one_line(exc))
         return _preview_attempt(source, geometry, target, options, info, fallback=True)
@@ -410,6 +609,12 @@ def _preview_attempt(source, geometry, target, options, info, fallback):
     # file, where the default vsync drops the preview to a handful of frames.
     vsync2 = info["frame_rate"] <= VFR_FRAME_RATE
 
+    # A chunk's work is bounded by -t rather than by the length of the file, and
+    # the fallback decodes at most SLOW_SEEK_MIN before it, so this grows only
+    # with a segment duration someone has set very high.
+    chunk_timeout = max(PREVIEW_TIMEOUT,
+                        max(length for _, length in chunks) * PREVIEW_ENCODE_FACTOR)
+
     # The marker is in the directory name so a run killed mid-encode leaves
     # something the next run's sweep recognises as ours.
     prefix = "chunks" + TMP_SUFFIX + "-"
@@ -420,7 +625,7 @@ def _preview_attempt(source, geometry, target, options, info, fallback):
             run(
                 _chunk_args(source, start, length, os.path.join(workdir, name),
                             video_filter, audio, options, fallback, vsync2),
-                timeout=options["timeout"],
+                timeout=chunk_timeout,
             )
             names.append(name)
 
@@ -434,7 +639,7 @@ def _preview_attempt(source, geometry, target, options, info, fallback):
         try:
             run(["-v", "error", "-f", "concat", "-i", listing, "-y",
                  "-c:v", "copy", "-c:a", "copy", tmp],
-                timeout=options["timeout"])
+                timeout=CONCAT_TIMEOUT)
             replace_atomically(tmp, target)
         except Exception:
             discard(tmp)
@@ -467,7 +672,7 @@ def generate_webp(preview_path, target, options):
         ] + _WEBP_ARGS + ["-an"]
         args += options["output_args"]
         args += [tmp]
-        run(args, timeout=options["timeout"])
+        run(args, timeout=WEBP_TIMEOUT)
         replace_atomically(tmp, target)
     except Exception:
         discard(tmp)
@@ -532,7 +737,7 @@ def generate_sprite(source, geometry, sprite_target, vtt_target, options, info):
     frames = []
     for index in range(count):
         timestamp = index * step
-        raw = _capture_cell(source, timestamp, video_filter, frame_bytes, options)
+        raw = _capture_cell(source, timestamp, video_filter, frame_bytes)
         if raw is None:
             # Keep the grid aligned: a missing cell must not shift every later
             # thumbnail by one position.
@@ -571,13 +776,13 @@ def generate_sprite(source, geometry, sprite_target, vtt_target, options, info):
                     for frame in frames:
                         sink.write(frame)
                 frames = None
-                run(montage + ["-i", spill] + tail, timeout=options["timeout"])
+                run(montage + ["-i", spill] + tail, timeout=MONTAGE_TIMEOUT)
             finally:
                 discard(spill)
         else:
             run(montage + ["-i", "-"] + tail,
-                stdin_data=b"".join(frames),
-                timeout=options["timeout"])
+                timeout=MONTAGE_TIMEOUT,
+                stdin_data=b"".join(frames))
         replace_atomically(tmp, sprite_target)
     except Exception:
         discard(tmp)
@@ -586,7 +791,7 @@ def generate_sprite(source, geometry, sprite_target, vtt_target, options, info):
     _write_vtt(vtt_target, sprite_target, count, grid, cell_w, cell_h, info)
 
 
-def _capture_cell(source, timestamp, video_filter, frame_bytes, options):
+def _capture_cell(source, timestamp, video_filter, frame_bytes):
     """One raw RGB frame. rgb24 has no row padding, so the size is exact."""
     seek = ["-ss", "%.3f" % timestamp]
     tail = [
@@ -596,14 +801,17 @@ def _capture_cell(source, timestamp, video_filter, frame_bytes, options):
     ]
     # Fast seek first; on failure fall back to seeking after the input, which is
     # accurate but decodes everything up to the timestamp. Same two-step as
-    # SpriteScreenshot.
+    # SpriteScreenshot. The second attempt gets a budget that grows with the
+    # timestamp for that reason, and a cell that runs out of it is skipped
+    # rather than allowed to hold the scene: 81 of these make up one sprite.
     attempts = (
-        ["-v", "error", "-y"] + seek + ["-i", source] + tail,
-        ["-v", "error", "-y", "-i", source] + seek + tail,
+        (["-v", "error", "-y"] + seek + ["-i", source] + tail, CELL_TIMEOUT),
+        (["-v", "error", "-y", "-i", source] + seek + tail,
+         _budget(CELL_TIMEOUT, timestamp, CELL_SLOW_TIMEOUT_MAX)),
     )
-    for args in attempts:
+    for args, budget in attempts:
         try:
-            raw = run(args, capture_stdout=True, timeout=options["timeout"])
+            raw = run(args, timeout=budget, capture_stdout=True)
         except FfmpegError as exc:
             vrlog.debug("cell capture failed at %.1fs: %s" % (timestamp, exc))
             continue

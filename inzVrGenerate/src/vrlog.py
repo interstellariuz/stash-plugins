@@ -3,6 +3,10 @@
 Messages travel over stderr prefixed with SOH, a level character, then STX.
 Stash reads stderr line by line, so progress updates are rate limited: a flood
 of them stalls the pipe and slows the plugin down more than the work does.
+
+Nothing here raises. A log line carries a path, a path carries whatever the
+library is named in, and a logger that throws on one of them would take down the
+worker that was only trying to report -- see setup() and _write().
 """
 
 import sys
@@ -16,6 +20,42 @@ _lock = threading.Lock()
 _last_progress = [0.0]
 
 
+def setup():
+    """Make stderr able to spell every path in the library.
+
+    Python picks the console encoding for stderr, which on Windows is a legacy
+    code page: a path with a character it cannot spell raises UnicodeEncodeError
+    from inside the logger, which is the last place that can afford to fail.
+    Stash reads the stream as UTF-8 regardless of what the console would use.
+    """
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        # reconfigure arrived in 3.7, and stderr may have been replaced with
+        # something that is not a text stream at all. _write copes either way.
+        pass
+
+
+def _write(prefix, line):
+    """One tagged line, or nothing. Logging must never end a run."""
+    try:
+        print(prefix + line, file=sys.stderr, flush=True)
+        return
+    except UnicodeEncodeError:
+        pass
+    except Exception:
+        # A closed or broken stderr means stash has gone; there is nobody left
+        # to tell about it.
+        return
+
+    encoding = getattr(sys.stderr, "encoding", None) or "ascii"
+    try:
+        print(prefix + line.encode(encoding, "replace").decode(encoding, "replace"),
+              file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 def _log(level_char, message):
     prefix = (_SOH + level_char + _STX).decode()
     # Stash reads stderr a line at a time and looks for the level prefix at the
@@ -27,7 +67,7 @@ def _log(level_char, message):
     lines = [line for line in str(message).splitlines() if line.strip()] or ["(empty)"]
     with _lock:
         for line in lines:
-            print(prefix + line, file=sys.stderr, flush=True)
+            _write(prefix, line)
 
 
 def debug(message):
