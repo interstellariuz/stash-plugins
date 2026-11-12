@@ -35,7 +35,7 @@ settings:
     type: BOOLEAN
   keyFill:
     displayName: "Key: fill screen / 100% / back"
-    description: Current photo only: fills the screen, a second press shows 100%, a third returns to where it started. Default Space.
+    description: "Current photo only: fills the screen, a second press shows 100%, a third returns to where it started. Default Space."
     type: STRING
   keyZoomIn:
     displayName: "Key: zoom in"
