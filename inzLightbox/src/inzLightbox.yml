@@ -25,6 +25,10 @@ settings:
     displayName: Keep zoom and position on navigation
     description: The next photo opens at the previous one's zoom (relative to fit to screen) and position, over what is remembered for it. Also in the lightbox options; V switches it, Z/X/C and picking a display mode leave it.
     type: BOOLEAN
+  disablePreload:
+    displayName: Disable preload
+    description: Leave loading to Stash. No photos are fetched in advance, and the neighbouring slides are not rendered off screen.
+    type: BOOLEAN
   preloadAhead:
     displayName: Preload ahead
     description: Photos after the current one loaded and decoded in advance, 0 to 5. Default 2.

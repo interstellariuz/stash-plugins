@@ -16,6 +16,8 @@ namespace InzLightbox {
     indicator: boolean;
     /** the next image takes the previous one's zoom and position */
     keepView: boolean;
+    /** off: Stash's own loading, slides off screen not rendered either */
+    preload: boolean;
     /** images loaded and decoded ahead of / behind the current one */
     preloadAhead: number;
     preloadBehind: number;
@@ -93,6 +95,7 @@ namespace InzLightbox {
       smooth: raw.disableSmoothZoom !== true,
       indicator: raw.hideZoomIndicator !== true,
       keepView: raw.keepView === true,
+      preload: raw.disablePreload !== true,
       preloadAhead: count(raw.preloadAhead, 2),
       preloadBehind: count(raw.preloadBehind, 1),
       keys,

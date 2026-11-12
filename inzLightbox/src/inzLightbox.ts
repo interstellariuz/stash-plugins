@@ -223,6 +223,11 @@
   // Fetched into the HTTP cache (the URLs are immutable) and decoded, so a slide
   // arrives ready; mounted neighbours are decoded too.
   function preload(c: HTMLElement, index: number): void {
+    lb?.classList.toggle("inzlb-preload", L.settings.preload);
+    if (!L.settings.preload) {
+      clearPreload();
+      return;
+    }
     for (const d of [-1, 1]) {
       const m = mediaIn(c.children[index + d]);
       if (m instanceof HTMLImageElement && m.complete && m.naturalWidth > 0) m.decode().catch(() => {});
@@ -913,6 +918,7 @@
   L.watchSettings(() => {
     if (!lb) return;
     syncOptionChecks();
+    if (carousel) preload(carousel, currentIndex(carousel));
     openFullscreenOnce();
   });
   new MutationObserver(onDomChange).observe(document.body, { childList: true, subtree: true });

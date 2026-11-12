@@ -25,7 +25,7 @@
 // they decode and paint only once they slide in, black for a moment. The
 // containment it implied stays: without paint, a photo larger than the screen
 // spills into the next slide.
-.Lightbox-carousel .Lightbox-carousel-image {
+.Lightbox.inzlb-preload .Lightbox-carousel .Lightbox-carousel-image {
   contain: layout style paint;
   content-visibility: visible;
 }

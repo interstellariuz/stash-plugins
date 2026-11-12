@@ -278,6 +278,7 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
 - **Preloading:** two photos ahead and one behind are loaded and decoded in advance (both
   counts are settings), and the neighbouring slides are rendered off screen, so a slide no
   longer comes in black. Stash's own `content-visibility: auto` on the slides deferred that.
+  *Disable preload* turns all of it off and leaves loading to Stash.
 - **A zoom percentage** shows in the middle of the screen while zooming (not on touch devices).
 - **Auto fullscreen** on open, switched in the plugin settings or in the lightbox options; both
   are the same setting. A browser that refuses fullscreen without a fresh click gets it on the
