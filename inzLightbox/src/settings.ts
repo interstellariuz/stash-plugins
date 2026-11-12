@@ -7,13 +7,18 @@
 namespace InzLightbox {
   export const PLUGIN_ID = "inzLightbox";
 
-  export type Action = "fill" | "zoomIn" | "zoomOut" | "original" | "fitScreen" | "fitWidth";
+  export type Action = "fill" | "zoomIn" | "zoomOut" | "original" | "fitScreen" | "fitWidth" | "keepView";
 
   export interface Settings {
     autoFullscreen: boolean;
     remember: boolean;
     smooth: boolean;
     indicator: boolean;
+    /** the next image takes the previous one's zoom and position */
+    keepView: boolean;
+    /** images loaded and decoded ahead of / behind the current one */
+    preloadAhead: number;
+    preloadBehind: number;
     /** KeyboardEvent.code -> action */
     keys: Map<string, Action>;
   }
@@ -25,6 +30,7 @@ namespace InzLightbox {
     ["keyOriginal", "original", "Z"],
     ["keyFitScreen", "fitScreen", "X"],
     ["keyFitWidth", "fitWidth", "C"],
+    ["keyKeepView", "keepView", "V"],
   ];
 
   const KEY_ALIASES: Record<string, string> = {
@@ -70,6 +76,10 @@ namespace InzLightbox {
       .filter((c): c is string => c !== null);
   }
 
+  function count(raw: unknown, fallback: number): number {
+    return typeof raw === "number" && Number.isFinite(raw) ? Math.min(5, Math.max(0, Math.round(raw))) : fallback;
+  }
+
   export function parseSettings(raw: Record<string, unknown>): Settings {
     const keys = new Map<string, Action>();
     for (const [name, action, fallback] of KEY_SETTINGS) {
@@ -82,6 +92,9 @@ namespace InzLightbox {
       remember: raw.disableRememberZoom !== true,
       smooth: raw.disableSmoothZoom !== true,
       indicator: raw.hideZoomIndicator !== true,
+      keepView: raw.keepView === true,
+      preloadAhead: count(raw.preloadAhead, 2),
+      preloadBehind: count(raw.preloadBehind, 1),
       keys,
     };
   }

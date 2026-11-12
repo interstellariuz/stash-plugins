@@ -21,6 +21,12 @@
   touch-action: none;
 }
 
+// Stash's content-visibility: auto leaves the neighbouring slides unrendered, so
+// they decode and paint only once they slide in, black for a moment
+.Lightbox-carousel .Lightbox-carousel-image {
+  content-visibility: visible;
+}
+
 // The owned image: top-left at (x, y), scale from the corner. !important beats
 // the inline transform React keeps writing.
 .Lightbox-carousel-image.inzlb-owned {

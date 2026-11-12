@@ -21,6 +21,18 @@ settings:
     displayName: Auto fullscreen
     description: Enter fullscreen when the lightbox opens; Esc then closes the lightbox, not just fullscreen. Also in the lightbox options.
     type: BOOLEAN
+  keepView:
+    displayName: Keep zoom and position on navigation
+    description: The next photo opens at the previous one's zoom (relative to fit to screen) and position, over what is remembered for it. Also in the lightbox options; V switches it, Z/X/C and picking a display mode leave it.
+    type: BOOLEAN
+  preloadAhead:
+    displayName: Preload ahead
+    description: Photos after the current one loaded and decoded in advance, 0 to 5. Default 2.
+    type: NUMBER
+  preloadBehind:
+    displayName: Preload behind
+    description: Photos before the current one loaded and decoded in advance, 0 to 5. Default 1.
+    type: NUMBER
   disableRememberZoom:
     displayName: Do not remember zoom
     description: By default every photo returns to its last zoom and position for the rest of the browser tab's session.
@@ -56,4 +68,8 @@ settings:
   keyFitWidth:
     displayName: "Key: fit horizontally"
     description: Switch the display mode to Fit horizontally. Default C.
+    type: STRING
+  keyKeepView:
+    displayName: "Key: keep zoom and position"
+    description: Switches keeping zoom and position on navigation. Default V.
     type: STRING

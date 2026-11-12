@@ -267,9 +267,17 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
   directly. Wheel and `↑` / `↓` **stop at 100%** on the way through it. Shift swaps zoom and pan as in Stash, but **the wheel never changes the photo** —
   neither in *Pan Y* at the top or bottom edge nor with Shift held.
 - **Dragging never changes the photo.** A click (under 4 px and 250 ms from the press) does,
-  left or right half; Stash counted a fast drag as a click. A photo larger than the screen pans
-  up to its edges; one that fits can be moved anywhere inside the screen. On touch it stays
-  centred on the axis where it fits.
+  left or right half; Stash counted a fast drag as a click. The mouse moves the photo anywhere,
+  past the screen edges too, as Stash's own drag does, but a strip of it (10% of the screen,
+  at least 64 px) always stays in view, also after zooming or resizing, so it can be grabbed
+  back. The wheel pans only up to the photo's edges.
+  On touch the photo stays within the screen and centred on the axis where it fits.
+- **Keep zoom and position** (`V`, or the lightbox options): the next photo opens at the
+  previous one's zoom, relative to fit to screen, and at the same spot. `Z` `X` `C` or picking
+  a display mode leave it.
+- **Preloading:** two photos ahead and one behind are loaded and decoded in advance (both
+  counts are settings), and the neighbouring slides are rendered off screen, so a slide no
+  longer comes in black. Stash's own `content-visibility: auto` on the slides deferred that.
 - **A zoom percentage** shows in the middle of the screen while zooming (not on touch devices).
 - **Auto fullscreen** on open, switched in the plugin settings or in the lightbox options; both
   are the same setting. A browser that refuses fullscreen without a fresh click gets it on the
@@ -289,6 +297,7 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
 | `Z`         | Display mode *Original*                                                |
 | `X`         | Display mode *Fit to screen*                                           |
 | `C`         | Display mode *Fit horizontally*                                        |
+| `V`         | Keep zoom and position on navigation, on / off                         |
 
 `Z` `X` `C` switch Stash's own display mode, as the lightbox options do: it is kept, and photos
 not zoomed yet open in it. The current photo takes the new mode's size in place. `Space` and the
@@ -308,7 +317,9 @@ with `!important` over React's inline transform, and navigation is handed back t
 `ArrowLeft`/`ArrowRight` keydowns. Stash's own options are read from the hidden inline copy of
 its options form. It depends on these class names: `Lightbox`, `Lightbox-display`,
 `Lightbox-carousel`, `Lightbox-carousel-image`, `Lightbox-carousel-image-wrapper`,
-`Lightbox-header-options-inline`. Stash's *Reset zoom* button no longer appears, since Stash's
+`Lightbox-header-options-inline`. Preloading beyond the mounted neighbours reads the `images`
+prop of Stash's Lightbox component from React's fiber; if that ever changes, only the extra
+preloading stops. Stash's *Reset zoom* button no longer appears, since Stash's
 own zoom stays at 1; `Z` and `X` take its place.
 
 #### Requirements

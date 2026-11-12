@@ -56,15 +56,33 @@ namespace InzLightbox {
     return Math.min(max, Math.max(min, s));
   }
 
-  // Larger than the box: no empty band at either edge. Smaller: centred, or
-  // anywhere fully inside the box when free.
+  /** Free movement keeps this share of the box (or the whole image when smaller) on screen. */
+  const KEEP_SHARE = 0.1;
+  const KEEP_MIN_PX = 64;
+
+  // Strict: larger than the box, no empty band at either edge; smaller, centred.
+  // Free: anywhere, as Stash's own drag, but a strip stays on screen to grab it back by.
   function clampAxis(pos: number, size: number, box: number, free: boolean): number {
-    if (size <= box && !free) return (box - size) / 2;
-    return Math.min(Math.max(0, box - size), Math.max(Math.min(0, box - size), pos));
+    if (free) {
+      const keep = Math.min(size, Math.max(KEEP_MIN_PX, box * KEEP_SHARE));
+      return Math.min(box - keep, Math.max(keep - size, pos));
+    }
+    if (size <= box) return (box - size) / 2;
+    return Math.min(0, Math.max(box - size, pos));
   }
 
   export function clampView(v: View, n: Size, b: Size, free = false): View {
     return { s: v.s, x: clampAxis(v.x, n.w * v.s, b.w, free), y: clampAxis(v.y, n.h * v.s, b.h, free) };
+  }
+
+  /** Scroll along one axis up to the image edge; a position already past it does not jump back. */
+  export function scrollAxis(pos: number, delta: number, size: number, box: number): number {
+    const lo = Math.min(0, box - size);
+    const hi = Math.max(0, box - size);
+    const next = pos + delta;
+    if (delta > 0 && next > hi) return Math.max(pos, hi);
+    if (delta < 0 && next < lo) return Math.min(pos, lo);
+    return next;
   }
 
   /** Scale by factor, stopping at 100% when the step would cross it. */
@@ -73,10 +91,13 @@ namespace InzLightbox {
     return (s < 1 && next > 1) || (s > 1 && next < 1) ? 1 : next;
   }
 
-  /** Centre of the visible part of the image, in box coordinates. */
+  /** Centre of the visible part of the image, in box coordinates; the box centre when none is. */
   export function visibleCenter(v: View, n: Size, b: Size): { x: number; y: number } {
-    const mid = (pos: number, size: number, box: number) =>
-      (Math.max(0, pos) + Math.min(box, pos + size)) / 2;
+    const mid = (pos: number, size: number, box: number) => {
+      const lo = Math.max(0, pos);
+      const hi = Math.min(box, pos + size);
+      return hi > lo ? (lo + hi) / 2 : box / 2;
+    };
     return { x: mid(v.x, n.w * v.s, b.w), y: mid(v.y, n.h * v.s, b.h) };
   }
 

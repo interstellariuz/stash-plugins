@@ -66,7 +66,10 @@
   // zoom relative to the default, carried to the next image when Stash keeps zoom
   // on nav and nothing is remembered
   let carry = 1;
-  // mouse input pans an image that fits anywhere inside the box; touch keeps it centred
+  // the view handed to the next image in keep-view mode: zoom relative to fit to screen
+  let kept: { k: number; cx: number; cy: number } | null = null;
+  const preloaded = new Map<string, HTMLImageElement>();
+  // mouse input moves the image freely, as Stash's drag does; touch keeps it in bounds
   let freePan = !matchMedia("(hover: none) and (pointer: coarse)").matches;
   let fullscreenTried = false;
   let fullscreenPending = false;
@@ -185,10 +188,75 @@
     }
     injectOptions();
 
-    const media = carousel ? mediaIn(carousel.children[currentIndex(carousel)]) : null;
+    const index = carousel ? currentIndex(carousel) : 0;
+    if (carousel) preload(carousel, index);
+    const media = carousel ? mediaIn(carousel.children[index]) : null;
     if (owned && owned.media === media && media.isConnected) return;
     release();
     if (media) take(media);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Preloading
+   * ---------------------------------------------------------------- */
+
+  // Stash mounts only the neighbouring slides and knows the rest only in its
+  // React props: the Lightbox component's images, found up the carousel's fiber.
+  function lightboxImages(c: HTMLElement): any[] | null {
+    const k = Object.keys(c).find((key) => key.startsWith("__reactFiber$"));
+    let f = k ? (c as any)[k] : null;
+    for (let i = 0; f && i < 40; i++, f = f.return) {
+      const images = f.memoizedProps?.images;
+      if (Array.isArray(images)) return images.length === c.children.length ? images : null;
+    }
+    return null;
+  }
+
+  function preloadUrl(image: any): string | null {
+    const file = image?.visual_files?.[0];
+    // Stash's isVideo: a clip would download whole
+    if (file?.__typename === "VideoFile" && file.video_codec !== "gif") return null;
+    const url = image?.paths?.image;
+    return typeof url === "string" && url ? url : null;
+  }
+
+  // Fetched into the HTTP cache (the URLs are immutable) and decoded, so a slide
+  // arrives ready; mounted neighbours are decoded too.
+  function preload(c: HTMLElement, index: number): void {
+    for (const d of [-1, 1]) {
+      const m = mediaIn(c.children[index + d]);
+      if (m instanceof HTMLImageElement && m.complete && m.naturalWidth > 0) m.decode().catch(() => {});
+    }
+    const images = lightboxImages(c);
+    const want: string[] = [];
+    if (images) {
+      const offsets: number[] = [];
+      for (let d = 1; d <= L.settings.preloadAhead; d++) offsets.push(d);
+      for (let d = 1; d <= L.settings.preloadBehind; d++) offsets.push(-d);
+      for (const d of offsets) {
+        const url = preloadUrl(images[index + d]);
+        if (url) want.push(url);
+      }
+    }
+    for (const [url, img] of preloaded) {
+      if (want.includes(url)) continue;
+      // cancels a download still running for an image left behind
+      if (!img.complete) img.removeAttribute("src");
+      preloaded.delete(url);
+    }
+    for (const url of want) {
+      if (preloaded.has(url)) continue;
+      const img = new Image();
+      img.decoding = "async";
+      img.src = url;
+      img.decode().catch(() => {});
+      preloaded.set(url, img);
+    }
+  }
+
+  function clearPreload(): void {
+    for (const img of preloaded.values()) if (!img.complete) img.removeAttribute("src");
+    preloaded.clear();
   }
 
   function take(media: Media): void {
@@ -208,7 +276,12 @@
     if (!size) return;
 
     const key = imageKey(media);
-    const saved = L.settings.remember ? L.recallView(key) : null;
+    const k = L.settings.keepView ? kept : null;
+    const saved = k
+      ? { s: L.clampScale(k.k * L.fitScreenScale(nat, size), nat, size), cx: k.cx, cy: k.cy }
+      : L.settings.remember
+        ? L.recallView(key)
+        : null;
     const resize = new ResizeObserver(onResize);
     const o: Owned = {
       box,
@@ -237,6 +310,8 @@
     o.resize.disconnect();
     const opts = stashOptions();
     carry = o.v.s / L.defaultScale(o.nat, o.size, opts.displayMode, opts.scaleUp);
+    const norm = L.toNorm(o.v, o.nat, o.size);
+    kept = { k: o.v.s / L.fitScreenScale(o.nat, o.size), cx: norm.cx, cy: norm.cy };
     L.flushViews();
   }
 
@@ -253,9 +328,8 @@
     st.setProperty("--inzlb-x", `${v.x}px`);
     st.setProperty("--inzlb-y", `${v.y}px`);
     st.setProperty("--inzlb-s", `${v.s}`);
-    const dw = o.nat.w * v.s - o.size.w;
-    const dh = o.nat.h * v.s - o.size.h;
-    o.box.classList.toggle("inzlb-pan", freePan ? Math.abs(dw) > 0.5 || Math.abs(dh) > 0.5 : dw > 0.5 || dh > 0.5);
+    const movable = freePan || o.nat.w * v.s > o.size.w + 0.5 || o.nat.h * v.s > o.size.h + 0.5;
+    o.box.classList.toggle("inzlb-pan", movable);
   }
 
   /** A user change: clamped, remembered, indicated. */
@@ -267,7 +341,7 @@
     o.touched = true;
     if (!keepFill) o.fill = undefined;
     if (L.settings.remember) L.rememberView(o.key, L.toNorm(o.v, o.nat, o.size));
-    if (o.v.s !== prevS) showIndicator(o.v.s);
+    if (o.v.s !== prevS) showIndicator(`${Math.round(o.v.s * 100)}%`);
   }
 
   function zoomTo(s: number, ax: number, ay: number): void {
@@ -332,7 +406,7 @@
    * Zoom indicator
    * ---------------------------------------------------------------- */
 
-  function showIndicator(s: number): void {
+  function showIndicator(text: string): void {
     if (!L.settings.indicator || !lb) return;
     if (!indicator || !indicator.isConnected) {
       indicator = document.createElement("div");
@@ -342,7 +416,7 @@
       indicator.appendChild(indicatorText);
       lb.appendChild(indicator);
     }
-    indicatorText!.nodeValue = `${Math.round(s * 100)}%`;
+    indicatorText!.nodeValue = text;
     indicator.classList.add("inzlb-show");
     clearTimeout(indicatorTimer);
     indicatorTimer = window.setTimeout(() => indicator?.classList.remove("inzlb-show"), INDICATOR_MS);
@@ -400,8 +474,14 @@
   }
 
   /* ---------------------------------------------------------------- *
-   * "Auto fullscreen" in Stash's lightbox options
+   * The plugin's own switches in Stash's lightbox options
    * ---------------------------------------------------------------- */
+
+  type Switch = "autoFullscreen" | "keepView";
+  const SWITCHES: [Switch, string][] = [
+    ["keepView", "Keep zoom and position on navigation"],
+    ["autoFullscreen", "Auto fullscreen"],
+  ];
 
   function injectOptions(): void {
     if (!lb) return;
@@ -409,33 +489,44 @@
       // Form.Group > Form.Group.row > Col > Form.Check > input
       const group = anchor.closest(".row")?.parentElement;
       if (!group?.parentElement || group.parentElement.querySelector(":scope > .inzlb-option")) continue;
-      group.after(buildOption());
+      // after() puts each in front of the previous one: reversed keeps the list order
+      for (const [name, label] of SWITCHES.slice().reverse()) group.after(buildOption(name, label));
     }
   }
 
-  function buildOption(): HTMLElement {
-    const id = `inzlb-autofs-${++optionSeq}`;
+  function buildOption(name: Switch, label: string): HTMLElement {
+    const id = `inzlb-${name}-${++optionSeq}`;
     const wrap = document.createElement("div");
     wrap.className = "form-group inzlb-option";
     wrap.innerHTML =
       `<div class="mb-1 row form-group"><div class="col"><div class="form-check">` +
       `<input type="checkbox" class="form-check-input" id="${id}">` +
-      `<label class="form-check-label" for="${id}">Auto fullscreen</label>` +
+      `<label class="form-check-label" for="${id}"></label>` +
       `</div></div></div>`;
+    wrap.querySelector("label")!.textContent = label;
     const input = wrap.querySelector("input")!;
-    input.checked = L.settings.autoFullscreen;
-    input.addEventListener("change", () => {
-      L.settings.autoFullscreen = input.checked;
-      syncOptionChecks();
-      L.saveSetting("autoFullscreen", input.checked).catch((e) => console.error("inzLightbox: save", e));
-    });
+    input.dataset.inzlb = name;
+    input.checked = L.settings[name];
+    input.addEventListener("change", () => setSwitch(name, input.checked));
     return wrap;
+  }
+
+  function setSwitch(name: Switch, on: boolean): void {
+    L.settings[name] = on;
+    syncOptionChecks();
+    L.saveSetting(name, on).catch((e) => console.error("inzLightbox: save", e));
   }
 
   function syncOptionChecks(): void {
     lb?.querySelectorAll<HTMLInputElement>(".inzlb-option input").forEach((i) => {
-      i.checked = L.settings.autoFullscreen;
+      i.checked = L.settings[i.dataset.inzlb as Switch] ?? false;
     });
+  }
+
+  function setKeepView(on: boolean, announce = true): void {
+    if (L.settings.keepView === on) return;
+    setSwitch("keepView", on);
+    if (announce) showIndicator(on ? "Keep zoom: on" : "Keep zoom: off");
   }
 
   /* ---------------------------------------------------------------- *
@@ -486,7 +577,11 @@
     stopAnim();
     const sy = smooth ? -dy : -Math.sign(dy) * WHEEL_PAN_STEP;
     const sx = smooth ? -dx : -Math.sign(dx) * WHEEL_PAN_STEP;
-    update({ s: o.v.s, x: o.v.x + sx, y: o.v.y + sy });
+    update({
+      s: o.v.s,
+      x: L.scrollAxis(o.v.x, sx, o.nat.w * o.v.s, o.size.w),
+      y: L.scrollAxis(o.v.y, sy, o.nat.h * o.v.s, o.size.h),
+    });
   }
 
   function onMouseDown(e: MouseEvent): void {
@@ -681,6 +776,7 @@
     const scaleTo = (s: number, keepFill = false) => update(L.zoomAt(o.v, s, cx, cy), keepFill);
     // the mode for every image, and the current one rescaled to it in place
     const mode = (m: InzLightbox.DisplayMode) => {
+      setKeepView(false);
       setDisplayMode(m);
       scaleTo(L.defaultScale(o.nat, o.size, m, stashOptions().scaleUp));
     };
@@ -702,6 +798,9 @@
         break;
       case "fitWidth":
         mode("FIT_X");
+        break;
+      case "keepView":
+        setKeepView(!L.settings.keepView);
         break;
       case "fill": {
         // fill the screen -> 100% -> back to where the cycle started
@@ -729,6 +828,8 @@
     if (!(t instanceof HTMLElement) || !lb?.contains(t) || t.closest(".inzlb-option")) return;
     const isMode = t instanceof HTMLSelectElement && !!t.querySelector('option[value="FIT_X"]');
     if (!isMode && t.id !== "scaleUp") return;
+    // picking a display mode leaves keep-view mode, as Z/X/C do
+    if (isMode) setKeepView(false, false);
     // Stash's form re-renders with the new value after its state update
     window.setTimeout(() => {
       const o = owned;
@@ -769,6 +870,7 @@
   function attach(el: HTMLElement): void {
     lb = el;
     fullscreenTried = false;
+    kept = null;
     fullscreenPending = false;
     fullscreenOwned = !!document.fullscreenElement && el.contains(document.fullscreenElement);
     for (const [type, fn] of LISTENERS) window.addEventListener(type, fn, LISTEN);
@@ -783,6 +885,7 @@
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     fullscreenOwned = false;
     carouselObserver.disconnect();
+    clearPreload();
     carousel = null;
     lb = null;
     endDrag();
