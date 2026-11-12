@@ -56,14 +56,28 @@ namespace InzLightbox {
     return Math.min(max, Math.max(min, s));
   }
 
-  // Smaller than the box: centred; larger: no empty band at either edge.
-  function clampAxis(pos: number, size: number, box: number): number {
-    if (size <= box) return (box - size) / 2;
-    return Math.min(0, Math.max(box - size, pos));
+  // Larger than the box: no empty band at either edge. Smaller: centred, or
+  // anywhere fully inside the box when free.
+  function clampAxis(pos: number, size: number, box: number, free: boolean): number {
+    if (size <= box && !free) return (box - size) / 2;
+    return Math.min(Math.max(0, box - size), Math.max(Math.min(0, box - size), pos));
   }
 
-  export function clampView(v: View, n: Size, b: Size): View {
-    return { s: v.s, x: clampAxis(v.x, n.w * v.s, b.w), y: clampAxis(v.y, n.h * v.s, b.h) };
+  export function clampView(v: View, n: Size, b: Size, free = false): View {
+    return { s: v.s, x: clampAxis(v.x, n.w * v.s, b.w, free), y: clampAxis(v.y, n.h * v.s, b.h, free) };
+  }
+
+  /** Scale by factor, stopping at 100% when the step would cross it. */
+  export function stepScale(s: number, factor: number): number {
+    const next = s * factor;
+    return (s < 1 && next > 1) || (s > 1 && next < 1) ? 1 : next;
+  }
+
+  /** Centre of the visible part of the image, in box coordinates. */
+  export function visibleCenter(v: View, n: Size, b: Size): { x: number; y: number } {
+    const mid = (pos: number, size: number, box: number) =>
+      (Math.max(0, pos) + Math.min(box, pos + size)) / 2;
+    return { x: mid(v.x, n.w * v.s, b.w), y: mid(v.y, n.h * v.s, b.h) };
   }
 
   export function centered(s: number, n: Size, b: Size): View {

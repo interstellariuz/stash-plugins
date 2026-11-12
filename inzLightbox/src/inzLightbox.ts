@@ -37,6 +37,8 @@
   const TAP_BACK_SHARE = 0.3;
   const INDICATOR_MS = 800;
   const OPTION_SETTLE_MS = 50;
+  // a fullscreen exit this soon after a press came from a button, not from Esc
+  const EXIT_BY_CLICK_MS = 1000;
 
   interface Owned {
     box: HTMLElement;
@@ -61,10 +63,15 @@
   let carousel: HTMLElement | null = null;
   let owned: Owned | null = null;
   const awaited = new WeakSet<Media>();
-  // zoom relative to the default, carried to unvisited images when Stash keeps zoom on nav
+  // zoom relative to the default, carried to the next image when Stash keeps zoom
+  // on nav and nothing is remembered
   let carry = 1;
+  // mouse input pans an image that fits anywhere inside the box; touch keeps it centred
+  let freePan = !matchMedia("(hover: none) and (pointer: coarse)").matches;
   let fullscreenTried = false;
   let fullscreenPending = false;
+  let fullscreenOwned = false;
+  let lastPress = -Infinity;
 
   let anim: { target: number; ax: number; ay: number; last: number; frame: number } | null = null;
   let wheelLast = -Infinity;
@@ -207,7 +214,7 @@
       key,
       nat,
       size,
-      v: saved ? L.clampView(L.fromNorm(saved, nat, size), nat, size) : startView(nat, size),
+      v: saved ? L.clampView(L.fromNorm(saved, nat, size), nat, size, freePan) : startView(nat, size),
       touched: !!saved,
       resize,
     };
@@ -233,7 +240,7 @@
   function startView(nat: Size, size: Size): View {
     const opts = stashOptions();
     let s = L.defaultScale(nat, size, opts.displayMode, opts.scaleUp);
-    if (!opts.resetZoomOnNav) s = L.clampScale(s * carry, nat, size);
+    if (!opts.resetZoomOnNav && !L.settings.remember) s = L.clampScale(s * carry, nat, size);
     return L.clampView(L.centered(s, nat, size), nat, size);
   }
 
@@ -243,7 +250,9 @@
     st.setProperty("--inzlb-x", `${v.x}px`);
     st.setProperty("--inzlb-y", `${v.y}px`);
     st.setProperty("--inzlb-s", `${v.s}`);
-    o.box.classList.toggle("inzlb-pan", o.nat.w * v.s > o.size.w + 0.5 || o.nat.h * v.s > o.size.h + 0.5);
+    const dw = o.nat.w * v.s - o.size.w;
+    const dh = o.nat.h * v.s - o.size.h;
+    o.box.classList.toggle("inzlb-pan", freePan ? Math.abs(dw) > 0.5 || Math.abs(dh) > 0.5 : dw > 0.5 || dh > 0.5);
   }
 
   /** A user change: clamped, remembered, indicated. */
@@ -251,7 +260,7 @@
     const o = owned;
     if (!o) return;
     const prevS = o.v.s;
-    apply(o, L.clampView(v, o.nat, o.size));
+    apply(o, L.clampView(v, o.nat, o.size, freePan));
     o.touched = true;
     if (!keepFill) o.fill = undefined;
     if (L.settings.remember) L.rememberView(o.key, L.toNorm(o.v, o.nat, o.size));
@@ -271,7 +280,7 @@
     if (!size || (size.w === o.size.w && size.h === o.size.h)) return;
     const norm = L.toNorm(o.v, o.nat, o.size);
     o.size = size;
-    apply(o, o.touched ? L.clampView(L.fromNorm(norm, o.nat, size), o.nat, size) : startView(o.nat, size));
+    apply(o, o.touched ? L.clampView(L.fromNorm(norm, o.nat, size), o.nat, size, freePan) : startView(o.nat, size));
   }
 
   /* ---------------------------------------------------------------- *
@@ -282,10 +291,10 @@
     const o = owned;
     if (!o) return;
     if (!L.settings.smooth) {
-      zoomTo(o.v.s * factor, ax, ay);
+      zoomTo(L.stepScale(o.v.s, factor), ax, ay);
       return;
     }
-    const target = L.clampScale((anim ? anim.target : o.v.s) * factor, o.nat, o.size);
+    const target = L.clampScale(L.stepScale(anim ? anim.target : o.v.s, factor), o.nat, o.size);
     if (anim) {
       Object.assign(anim, { target, ax, ay });
       return;
@@ -371,6 +380,22 @@
     if (fullscreenPending && within(t, ".Lightbox-display")) requestFullscreen();
   }
 
+  // With auto fullscreen, Esc closes the lightbox too. The browser takes Esc in
+  // fullscreen and only exits it, so the exit itself is the signal; Stash's
+  // toggle and close buttons exit right after a press and are left alone.
+  function onFullscreenChange(): void {
+    const el = document.fullscreenElement;
+    if (el) {
+      fullscreenOwned = !!lb?.contains(el);
+      return;
+    }
+    const was = fullscreenOwned;
+    fullscreenOwned = false;
+    if (!was || !lb?.isConnected || !L.settings.autoFullscreen) return;
+    if (performance.now() - lastPress < EXIT_BY_CLICK_MS || document.hidden || !document.hasFocus()) return;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  }
+
   /* ---------------------------------------------------------------- *
    * "Auto fullscreen" in Stash's lightbox options
    * ---------------------------------------------------------------- */
@@ -421,6 +446,7 @@
     e.stopPropagation();
     const o = owned;
     if (!o) return;
+    freePan = true;
 
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? o.size.h : 1;
     let dy = e.deltaY * unit;
@@ -434,7 +460,7 @@
 
     if (e.ctrlKey) {
       stopAnim();
-      zoomTo(o.v.s * Math.exp(-dy / PINCH_WHEEL_FACTOR), p.x, p.y);
+      zoomTo(L.stepScale(o.v.s, Math.exp(-dy / PINCH_WHEEL_FACTOR)), p.x, p.y);
       return;
     }
 
@@ -448,7 +474,7 @@
       if (!dy) return;
       if (smooth) {
         stopAnim();
-        zoomTo(o.v.s * Math.exp(-dy / WHEEL_ZOOM_FACTOR), p.x, p.y);
+        zoomTo(L.stepScale(o.v.s, Math.exp(-dy / WHEEL_ZOOM_FACTOR)), p.x, p.y);
       } else {
         animateZoom(dy < 0 ? ZOOM_WHEEL_STEP : 1 / ZOOM_WHEEL_STEP, p.x, p.y);
       }
@@ -468,6 +494,7 @@
     // no text selection, no native image drag
     e.preventDefault();
     stopAnim();
+    freePan = true;
     drag = { owner: owned, start: owned?.v ?? null, x0: e.clientX, y0: e.clientY, t0: e.timeStamp, moved: false };
   }
 
@@ -523,7 +550,10 @@
 
   // Stash's own pinch runs on pointer events of the image
   function onPointer(e: PointerEvent): void {
-    if (e.type === "pointerdown") retryFullscreen(e.target);
+    if (e.type === "pointerdown") {
+      lastPress = performance.now();
+      retryFullscreen(e.target);
+    }
     if (isMediaTarget(e.target)) e.stopPropagation();
   }
 
@@ -554,6 +584,7 @@
     e.preventDefault();
     e.stopPropagation();
     stopAnim();
+    freePan = false;
     if (!touching) {
       touching = true;
       const t = e.touches[0];
@@ -622,6 +653,7 @@
     // a focused button would take Space as a click
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused !== document.body && lb.contains(focused)) focused.blur();
+    freePan = true;
     if (owned) run(action, owned, e);
   }
 
@@ -630,9 +662,11 @@
     if (L.settings.keys.has(e.code)) e.preventDefault();
   }
 
+  // Keys zoom about the centre of the visible part of the image, so an image
+  // moved off-centre stays where it is.
   function run(action: InzLightbox.Action, o: Owned, e: KeyboardEvent): void {
-    const cx = o.size.w / 2;
-    const cy = o.size.h / 2;
+    const { x: cx, y: cy } = L.visibleCenter(o.v, o.nat, o.size);
+    const scaleTo = (s: number, keepFill = false) => update(L.zoomAt(o.v, s, cx, cy), keepFill);
     if (action === "zoomIn" || action === "zoomOut") {
       // auto-repeat at the OS rate would zoom far too fast
       if (e.repeat && e.timeStamp - lastKeyZoom < KEY_REPEAT_MS) return;
@@ -644,23 +678,23 @@
     stopAnim();
     switch (action) {
       case "original":
-        update(L.centered(1, o.nat, o.size));
+        scaleTo(1);
         break;
       case "fitScreen":
-        update(L.centered(L.fitScreenScale(o.nat, o.size), o.nat, o.size));
+        scaleTo(L.fitScreenScale(o.nat, o.size));
         break;
       case "fitWidth":
-        update(L.centered(L.fitWidthScale(o.nat, o.size), o.nat, o.size));
+        scaleTo(L.fitWidthScale(o.nat, o.size));
         break;
       case "fill": {
         // fill the screen -> 100% -> back to where the cycle started
         const f = o.fill;
         if (!f) {
           const prev = o.v;
-          update(L.centered(L.coverScale(o.nat, o.size), o.nat, o.size), true);
+          scaleTo(L.coverScale(o.nat, o.size), true);
           o.fill = { step: 1, prev };
         } else if (f.step === 1) {
-          update(L.zoomAt(o.v, 1, cx, cy), true);
+          scaleTo(1, true);
           f.step = 2;
         } else {
           update(f.prev);
@@ -717,7 +751,9 @@
     lb = el;
     fullscreenTried = false;
     fullscreenPending = false;
+    fullscreenOwned = !!document.fullscreenElement && el.contains(document.fullscreenElement);
     for (const [type, fn] of LISTENERS) window.addEventListener(type, fn, LISTEN);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
     sync();
     openFullscreenOnce();
   }
@@ -725,6 +761,8 @@
   function detach(): void {
     release();
     for (const [type, fn] of LISTENERS) window.removeEventListener(type, fn, LISTEN);
+    document.removeEventListener("fullscreenchange", onFullscreenChange);
+    fullscreenOwned = false;
     carouselObserver.disconnect();
     carousel = null;
     lb = null;

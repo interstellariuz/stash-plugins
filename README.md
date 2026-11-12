@@ -260,17 +260,21 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
 
 - **Zoom is remembered per photo** for the rest of the browser tab's session (sessionStorage):
   back on a photo, it shows the same zoom and the same spot, even after the window or fullscreen
-  changed size. A photo seen for the first time opens the way Stash's display mode says, but
-  **centred** — *Original* and *Fit horizontally* no longer open at the top edge.
+  changed size. A photo seen for the first time opens the way Stash's display mode says (not
+  at the previous photo's zoom), but **centred** — *Original* and *Fit horizontally* no longer
+  open at the top edge.
 - **The wheel zooms towards the cursor** and animates; a trackpad or a free-spinning wheel zooms
-  directly. Shift swaps zoom and pan as in Stash, but **the wheel never changes the photo** —
+  directly. Wheel and `↑` / `↓` **stop at 100%** on the way through it. Shift swaps zoom and pan as in Stash, but **the wheel never changes the photo** —
   neither in *Pan Y* at the top or bottom edge nor with Shift held.
 - **Dragging never changes the photo.** A click (under 4 px and 250 ms from the press) does,
-  left or right half; Stash counted a fast drag as a click. Panning stops at the image edges.
+  left or right half; Stash counted a fast drag as a click. A photo larger than the screen pans
+  up to its edges; one that fits can be moved anywhere inside the screen. On touch it stays
+  centred on the axis where it fits.
 - **A zoom percentage** shows in the middle of the screen while zooming (not on touch devices).
 - **Auto fullscreen** on open, switched in the plugin settings or in the lightbox options; both
   are the same setting. A browser that refuses fullscreen without a fresh click gets it on the
-  first click or key inside the lightbox.
+  first click or key inside the lightbox. With it on, `Esc` closes the lightbox in one press
+  instead of only leaving fullscreen; the fullscreen button still just leaves it.
 - **Touch:** a tap on the left 30% of the screen goes back, the rest goes forward; fast taps no
   longer select text or raise Firefox's copy bar, and no longer close the lightbox when they
   miss the photo. Pinch zooms towards the point between the fingers, and lifting one finger
@@ -281,12 +285,13 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
 | Default     | Action                                                              |
 | ----------- | ------------------------------------------------------------------- |
 | `Space`     | Fill the screen; again: 100%; a third time: back to where it started |
-| `↑` / `↓`   | Zoom in / out by 15%, towards the centre, animated                   |
-| `Z`         | 100%, centred                                                        |
+| `↑` / `↓`   | Zoom in / out by 15%, animated                                       |
+| `Z`         | 100%                                                                 |
 | `X`         | Fit to screen                                                        |
 | `C`         | Fit horizontally                                                     |
 
-These act on the current photo only and change nothing in Stash's own lightbox options. Each
+These act on the current photo only and change nothing in Stash's own lightbox options. They
+zoom about the middle of the visible part of the photo, so it stays where it was moved. Each
 is a setting: a `KeyboardEvent.code` (`Space`, `ArrowUp`, `KeyZ`, `NumpadAdd`), a letter or
 digit (`Z`, `5`), or several separated by commas; empty restores the default, `none` turns the
 action off. Codes are physical keys, so they work under any keyboard layout. `←` `→` `Esc` and

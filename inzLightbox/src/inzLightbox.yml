@@ -19,7 +19,7 @@ ui:
 settings:
   autoFullscreen:
     displayName: Auto fullscreen
-    description: Enter fullscreen when the lightbox opens. Also in the lightbox options.
+    description: Enter fullscreen when the lightbox opens; Esc then closes the lightbox, not just fullscreen. Also in the lightbox options.
     type: BOOLEAN
   disableRememberZoom:
     displayName: Do not remember zoom
@@ -39,7 +39,7 @@ settings:
     type: STRING
   keyZoomIn:
     displayName: "Key: zoom in"
-    description: Zoom in by 15% towards the centre. Default ArrowUp.
+    description: Zoom in by 15%. Default ArrowUp.
     type: STRING
   keyZoomOut:
     displayName: "Key: zoom out"
@@ -47,7 +47,7 @@ settings:
     type: STRING
   keyOriginal:
     displayName: "Key: 100%"
-    description: Original size, centred. Default Z.
+    description: Original size. Default Z.
     type: STRING
   keyFitScreen:
     displayName: "Key: fit to screen"
