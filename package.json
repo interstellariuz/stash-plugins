@@ -4,10 +4,9 @@
   "private": true,
   "license": "AGPL-3.0",
   "scripts": {
-    "build": "npm run build:inzDateSelect && npm run build:inzVrGenerate && npm run build:inzRecords && npm run build:inzLightbox && npm run build:inzVideoZoom",
+    "build": "npm run build:inzVrGenerate && npm run build:inzRecords && npm run build:inzLightbox && npm run build:inzVideoZoom",
     "package": "node scripts/package.mjs",
     "check:graphql": "node scripts/check-graphql.mjs",
-    "build:inzDateSelect": "tsc -p inzDateSelect && sass --no-source-map inzDateSelect/src/inzDateSelect.scss inzDateSelect/dist/inzDateSelect/inzDateSelect.css && cpx \"inzDateSelect/src/*.yml\" inzDateSelect/dist/inzDateSelect && cpx \"inzDateSelect/src/manifest\" inzDateSelect/dist/inzDateSelect",
     "build:inzVrGenerate": "tsc -p inzVrGenerate && cpx \"inzVrGenerate/src/*.py\" inzVrGenerate/dist/inzVrGenerate && cpx \"inzVrGenerate/src/*.yml\" inzVrGenerate/dist/inzVrGenerate && cpx \"inzVrGenerate/src/manifest\" inzVrGenerate/dist/inzVrGenerate",
     "build:inzRecords": "tsc -p inzRecords && cpx \"inzRecords/src/*.{py,yml,css}\" inzRecords/dist/inzRecords && cpx \"inzRecords/src/manifest\" inzRecords/dist/inzRecords",
     "build:inzLightbox": "tsc -p inzLightbox && sass --no-source-map inzLightbox/src/inzLightbox.scss inzLightbox/dist/inzLightbox/inzLightbox.css && cpx \"inzLightbox/src/*.yml\" inzLightbox/dist/inzLightbox && cpx \"inzLightbox/src/manifest\" inzLightbox/dist/inzLightbox",
