@@ -1,6 +1,6 @@
 name: INZ Video Zoom
-description: PotPlayer-style mouse zoom and pan for the scene player. Ctrl + drag right and down zooms into a rectangle, any other direction resets; Alt + drag moves the video.
-version: 1.0.0
+description: PotPlayer-style mouse zoom and pan (Ctrl + drag a rectangle, Alt + drag) and MX Player-style fit mode (fit, crop, 100%) and orientation buttons for the scene player.
+version: 1.1.0
 
 ui:
   javascript:

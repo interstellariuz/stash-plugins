@@ -329,12 +329,13 @@ own zoom stays at 1; `Z` and `X` take its place.
 
 ### inz-video-zoom — *INZ Video Zoom*
 
-PotPlayer's mouse zoom and pan for the scene player. UI only, no backend, no settings.
+PotPlayer's mouse zoom and pan, and MX Player's fit mode and orientation buttons, for the
+scene player. UI only, no backend, no settings.
 
 | Gesture                              | Effect                                                         |
 | ------------------------------------ | -------------------------------------------------------------- |
 | `Ctrl` + drag right and down         | Zoom into the rectangle                                        |
-| `Ctrl` + drag up or left (any part)  | Reset zoom and position                                        |
+| `Ctrl` + drag up or left (any part)  | Reset zoom and position to the fit mode                        |
 | `Alt` + drag                         | Move the video, at any zoom, off screen too                    |
 
 - The rectangle is fitted **by its larger side**: all of it stays visible, centred. A
@@ -344,18 +345,45 @@ PotPlayer's mouse zoom and pan for the scene player. UI only, no backend, no set
 - A drag never pauses or plays the video. A `Ctrl` / `Alt` click without movement is an
   ordinary click. Releasing `Alt` after a drag does not open the browser menu.
 - The view survives fullscreen and resizing, and a stream switch within the scene (the
-  source selector, transcode fallback). Another scene starts unzoomed.
+  source selector, transcode fallback). Another scene starts in the fit mode, unzoomed.
 - Only the picture moves: subtitles and the controls stay put, and gestures do not
   start on the control bar. Nothing happens in VR mode or while casting.
+
+#### Control bar buttons
+
+Both sit next to the fullscreen button.
+
+| Button                    | Cycles through                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| `FIT` / `CROP` / `1:1`    | *Fit to screen* (Stash's own) → *Crop* (fills the player, edges cut off) → *100%* |
+| Rotate icon               | *Landscape* → *Portrait* → *Auto-rotate*, locking the device orientation         |
+
+- *100%* is one video pixel per physical screen pixel (`devicePixelRatio` included): a 4K
+  video on a 1080p screen is shown at 200% of the fit, and the message on switching says
+  so. A video smaller than the screen ends up smaller than the fit.
+- The fit mode follows resizes, fullscreen and rotation until a gesture moves the view; a
+  reset returns to it.
+- The orientation button shows only in fullscreen, and only where the browser can lock the
+  orientation: Android Chrome and the like on a touch screen. iOS and desktop browsers
+  cannot, and have no button. The first press picks the orientation opposite the current
+  one; the icon is blue while a choice made here applies.
+- Both choices are remembered in the browser (localStorage) for every scene; the
+  orientation is applied again on each entry into fullscreen. Until the orientation button
+  is first pressed, orientation is left to Stash entirely.
+- Stash's mobile UI leaves fullscreen when the phone turns to portrait. While an
+  orientation is picked here and the player is fullscreen, its handler
+  (`screen.orientation.onchange`) is held off, so *Portrait* and *Auto-rotate* stay in
+  fullscreen. Outside fullscreen it works as before.
 
 #### How it hooks in
 
 Same approach as inz-lightbox: capture listeners on `window` take the gestures before
 video.js does, and the `<video>` is placed through CSS variables on the player. The position
 is a fraction of the player box, so `translate()` percentages carry it through any resize.
+The buttons are plain DOM inserted into the control bar before `.vjs-fullscreen-control`.
 It depends on these class names: `VideoPlayer`, `video-js`, `vjs-tech`, `vjs-control-bar`,
-`vjs-menu`, `vjs-modal-dialog`, `vjs-button`. The scene is recognised by the `/scene/<id>/`
-part of the stream URL.
+`vjs-fullscreen-control`, `vjs-fullscreen`, `vjs-menu`, `vjs-modal-dialog`, `vjs-button`.
+The scene is recognised by the `/scene/<id>/` part of the stream URL.
 
 #### Requirements
 
