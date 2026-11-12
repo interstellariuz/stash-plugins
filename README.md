@@ -168,7 +168,7 @@ Stash made — which is the thing being fixed.
   top of [inzVrGenerate.tsx](inzVrGenerate/src/inzVrGenerate.tsx). The job-queue description is
   deliberately left out: the plugin recognises its own jobs by it.
 
-### inz-records — *Download Records*
+### inz-records — *INZ Download Records*
 
 Imports the metadata the site userscripts (`site-scripts`, a neighbouring repository) collect
 while downloading. The userscript sends the page's record to this plugin on every download; once
@@ -183,14 +183,26 @@ Records are matched to entities **by file name**: a file's `basename` against th
 - **Scene / gallery `…` menu → *Import from records…*** — directly under *Generate…*. From a
   scene, the galleries of the same record are handled in the same pass, and the other way round.
 - **Scene and gallery lists → `…` → *Import from records…*** for a selection, across sites.
-- **The status page** `/plugin/records` — the icon next to the settings cog (with the number of
-  records ready to import), or *Settings → Plugins → Download Records*.
+- **The records page** `/inz-records` — the icon next to the settings cog (with the number of
+  records ready to import), or *Settings → Plugins → INZ Download Records*. It is not under
+  `/plugin/`: the server serves plugin assets there, so a reload of such a page would be its 404.
 
 #### The dialog
 
 Every entity gets a row: what changes field by field, scalar fields as "before → after" (marked
 `replaces` when a value is already there), lists as additions only. Each field has its own switch,
-all on by default. `custom_fields.source` (the direct file link) goes along without one.
+all on by default.
+
+- Title, code, date, details and URLs (one per line) are **editable**: the "after" side is a field
+  holding the record's value, ↺ puts it back. *All fields* shows the ones the record leaves alone,
+  empty ones included, so a scene that is already up to date can still be corrected here.
+- Every performer and tag the record adds is its own chip; a click leaves it out.
+- `custom_fields.source` (the direct file link) has a switch too, and goes along with other
+  changes, never on its own. The plugin setting *Leave the source field off* starts it switched
+  off.
+- The entity's name opens it in a new tab; *record* opens the record on the records page.
+- With several entities: filters by state (*ready*, *up to date*, *no record*, *conflicting*) and
+  *Expand all*.
 
 - *up to date* — nothing to change; a repeated import is a no-op.
 - *no record* — no record names any of the entity's files.
@@ -207,14 +219,27 @@ The field logic is a port of the stash CLI (`stash/ops/records.mjs`, `ops/lookup
 [records.ts](inzRecords/src/records.ts) and behaves the same. The CLI keeps the substitution rules
 (abbywinters); entities that need them are better imported with `records --rules` there.
 
-#### The status page
+#### The records page
 
-A summary, not a table: records, files and sites received, when the last record arrived, and every
-record in one of three states — *ready to import* (a downloaded file is in Stash, the entity does
-not have the record's URL yet), *not in Stash yet* (no scene or gallery carries the file name: not
-scanned, or renamed on disk; the file names expand below) and *imported*. *Import all ready* opens
-the dialog on everything that is ready. The badge in the navbar shows the ready count from the
-last check, refreshed at most every 10 minutes.
+Records, files and sites received, and when the last record arrived (a click shows it). Every
+record is in one of three states — *ready to import* (a downloaded file is in Stash, the entity
+does not have the record's URL yet), *not in Stash yet* (no scene or gallery carries the file
+name: not scanned, or renamed on disk) and *imported*. The three counters filter the table;
+*Import all ready* opens the dialog on everything that is ready.
+
+- **Sites**: counts per site; a site name filters, *select* adds its records to the selection,
+  *delete…* drops all of them.
+- **The table**: search (title, URL, studio, file names), site and state filters, sorting by
+  record, site, state or arrival. A row opens to the record itself — fields, performers, tags,
+  description and every download with the scene or gallery it landed in — with *Import* (its
+  entities, imported or not) and *Delete…*.
+- **Selection**: checkboxes, Shift+click for a range. *Import N* opens the dialog on the selected
+  records' entities, *Delete N…* drops them from the store after a confirmation. Deleting touches
+  only the store; a push from the userscript sends a record again.
+- `/inz-records?site=…&key=…` opens on one record — the dialog's *record* link.
+
+The badge in the navbar shows the ready count from the last check, refreshed at most every 10
+minutes.
 
 #### Storage
 
@@ -227,8 +252,16 @@ called through `runPluginOperation`:
 | --------- | --------------------- | ------------------------------------------- |
 | `put`     | `site`, `key`, `record` | upserts the record, re-indexes its names  |
 | `lookup`  | `names`               | every record holding a file of that name    |
+| `get`     | `site`, `key`         | one record, or `null`                       |
+| `delete`  | `records: [{site, key}]`, or `site` | drops records and their names |
 | `stats`   | —                     | record counts per site                      |
-| `summary` | —                     | per-record digest for the status page       |
+| `summary` | —                     | per-record digest for the records page      |
+
+#### Settings
+
+| Setting | Effect |
+| --- | --- |
+| Leave the source field off | The dialog starts with `custom_fields.source` switched off |
 
 #### Requirements
 

@@ -1,9 +1,9 @@
 id: inzRecords
-name: Download Records
+name: INZ Download Records
 metadata:
   description: Imports the metadata the site userscripts send on download into scenes and galleries, matched by file name.
-version: 1.0.0
-date: "2026-11-11 00:00:00"
+version: 1.1.0
+date: "2026-11-12 00:00:00"
 requires: []
 source_repository: "https://interstellariuz.github.io/stash-plugins/index.yml"
 files:

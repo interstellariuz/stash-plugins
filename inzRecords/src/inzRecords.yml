@@ -1,6 +1,6 @@
-name: Download Records
+name: INZ Download Records
 description: Imports the metadata the site userscripts send on download into scenes and galleries, matched by file name.
-version: 1.0.0
+version: 1.1.0
 interface: raw
 errLog: error
 exec:
@@ -17,5 +17,11 @@ ui:
   css:
     - inzRecords.css
 
-# No tasks and no settings: the store is fed through runPluginOperation and
-# read by the UI the same way.
+settings:
+  skipSource:
+    displayName: Leave the source field off
+    description: The import dialog starts with custom field "source" (the direct file link) switched off; it can still be switched on per entity there.
+    type: BOOLEAN
+
+# No tasks: the store is fed through runPluginOperation and read by the UI the
+# same way.

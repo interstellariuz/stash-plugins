@@ -1,3 +1,5 @@
+/* -- Import dialog ------------------------------------------------------- */
+
 .inz-records-row {
   align-items: center;
   display: flex;
@@ -25,6 +27,18 @@
   overflow-wrap: anywhere;
 }
 
+.inz-records-current > .inz-records-row {
+  opacity: 0.75;
+}
+
+.inz-records-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
 .inz-records-fields {
   margin-left: 2.5rem;
 }
@@ -33,7 +47,7 @@
   align-items: baseline;
   display: grid;
   gap: 0.1rem 0.5rem;
-  grid-template-columns: 1.5rem 7rem minmax(0, 1fr) 1rem minmax(0, 1fr) auto;
+  grid-template-columns: 1.5rem 7rem minmax(0, 1fr) 1rem minmax(0, 1.4fr) auto;
   padding: 0.1rem 0;
 }
 
@@ -41,12 +55,43 @@
   overflow-wrap: anywhere;
 }
 
+.inz-records-before {
+  white-space: pre-line;
+}
+
+.inz-records-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+textarea.inz-records-input {
+  resize: vertical;
+}
+
+.inz-records-input-changed {
+  border-color: #17a2b8;
+}
+
+.inz-records-reset {
+  padding: 0 0.25rem;
+}
+
+.inz-records-more {
+  padding-left: 2rem;
+}
+
 .inz-records-added {
   grid-column: 3 / -1;
 }
 
-.inz-records-counts {
-  margin-bottom: 0.5rem;
+.inz-records-chip {
+  border: 0;
+  cursor: pointer;
+}
+
+.inz-records-chip-off {
+  opacity: 0.6;
+  text-decoration: line-through;
 }
 
 .inz-records-misses {
@@ -55,13 +100,141 @@
   padding-top: 0.5rem;
 }
 
+/* -- Records page -------------------------------------------------------- */
+
 .inz-records-page {
   padding-bottom: 1rem;
   padding-top: 1rem;
 }
 
+.inz-records-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
 .inz-records-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.inz-records-state {
+  align-items: baseline;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.inz-records-state-count {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.inz-records-sites {
+  margin-bottom: 1rem;
+  max-width: 48rem;
+}
+
+.inz-records-sites > summary {
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+}
+
+.inz-records-filters,
+.inz-records-bulk {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.inz-records-search {
+  flex: 1 1 16rem;
   max-width: 32rem;
+}
+
+.inz-records-select {
+  width: auto;
+}
+
+.inz-records-bulk {
+  background: rgba(23, 162, 184, 0.15);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  position: sticky;
+  top: 3.5rem;
+  z-index: 2;
+}
+
+.inz-records-table td {
+  vertical-align: top;
+}
+
+.inz-records-check-cell {
+  width: 2rem;
+}
+
+.inz-records-sort {
+  color: inherit;
+  font-weight: inherit;
+  padding: 0;
+}
+
+.inz-records-title {
+  overflow-wrap: anywhere;
+  padding: 0;
+  text-align: left;
+}
+
+.inz-records-sub {
+  font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+
+.inz-records-focus > td {
+  background: rgba(23, 162, 184, 0.2);
+}
+
+.inz-records-detail-row > td {
+  border-top: 0;
+}
+
+.inz-records-detail {
+  padding-bottom: 0.5rem;
+}
+
+.inz-records-dl {
+  display: grid;
+  gap: 0.1rem 0.75rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin-bottom: 0.5rem;
+}
+
+.inz-records-dl > dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.inz-records-description {
+  max-height: 8rem;
+  overflow-y: auto;
+  white-space: pre-line;
+}
+
+.inz-records-ignored {
+  text-decoration: line-through;
+}
+
+.inz-records-downloads {
+  max-width: 64rem;
+}
+
+.inz-records-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 @media (max-width: 576px) {
@@ -79,5 +252,9 @@
   .inz-records-field > .inz-records-replaces,
   .inz-records-added {
     grid-column: 2;
+  }
+
+  .inz-records-field > .inz-records-arrow {
+    display: none;
   }
 }

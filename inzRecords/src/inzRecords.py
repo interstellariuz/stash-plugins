@@ -4,8 +4,11 @@ Called through runPluginOperation; args.op picks the operation:
 
     put      {site, key, record}  upsert one record and re-index its file names
     lookup   {names: [...]}       every record that has a file of that name
+    get      {site, key}          one record, or null
+    delete   {records: [{site, key}]} or {site}
+                                  drop records with their file names
     stats    {}                   record counts per site
-    summary  {}                   per-record digest for the admin page
+    summary  {}                   per-record digest for the records page
 
 The UI does the matching and the editing; this side only stores and finds.
 Reads JSON on stdin, answers JSON on stdout, logs on stderr.
@@ -162,6 +165,40 @@ def op_lookup(db, args):
     return {"hits": hits}
 
 
+def op_get(db, args):
+    site = need_str(args, "site")
+    key = need_str(args, "key")
+    row = db.execute(
+        "SELECT record, updated_at FROM records WHERE site = ? AND key = ?", (site, key)
+    ).fetchone()
+    if row is None:
+        return None
+    return {"site": site, "key": key, "record": json.loads(row[0]), "updatedAt": row[1]}
+
+
+def op_delete(db, args):
+    if args.get("site") is not None:
+        site = need_str(args, "site")
+        with db:
+            db.execute("DELETE FROM names WHERE site = ?", (site,))
+            deleted = db.execute("DELETE FROM records WHERE site = ?", (site,)).rowcount
+        log("i", "deleted %d records of %s" % (deleted, site))
+        return {"deleted": deleted}
+
+    items = args.get("records")
+    if not isinstance(items, list):
+        raise ValueError("records must be a list of {site, key}, or site a string")
+    pairs = [(need_str(i, "site"), need_str(i, "key")) for i in items if isinstance(i, dict)]
+    deleted = 0
+    with db:
+        for site, key in pairs:
+            db.execute("DELETE FROM names WHERE site = ? AND key = ?", (site, key))
+            deleted += db.execute(
+                "DELETE FROM records WHERE site = ? AND key = ?", (site, key)).rowcount
+    log("i", "deleted %d records" % deleted)
+    return {"deleted": deleted}
+
+
 def op_stats(db, _args):
     sites = dict(db.execute("SELECT site, COUNT(*) FROM records GROUP BY site ORDER BY site"))
     return {"records": sum(sites.values()), "sites": sites}
@@ -183,6 +220,8 @@ def op_summary(db, _args):
             "key": key,
             "title": record.get("title") or "",
             "url": record.get("id") or key,
+            "date": record.get("date") or "",
+            "studio": record.get("studio") or "",
             "updatedAt": updated_at,
             "files": files,
         }
@@ -195,6 +234,8 @@ def op_summary(db, _args):
 OPS = {
     "put": op_put,
     "lookup": op_lookup,
+    "get": op_get,
+    "delete": op_delete,
     "stats": op_stats,
     "summary": op_summary,
 }
