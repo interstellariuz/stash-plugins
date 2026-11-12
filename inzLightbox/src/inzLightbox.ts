@@ -95,13 +95,16 @@
    * DOM lookups
    * ---------------------------------------------------------------- */
 
+  // the selects carry no reliable id, their option values identify them
+  function optionsSelect(value: string): HTMLSelectElement | undefined {
+    return lb
+      ?.querySelector(".Lightbox-header-options-inline")
+      ?.querySelector<HTMLOptionElement>(`option[value="${value}"]`)?.parentElement as HTMLSelectElement | undefined;
+  }
+
   function stashOptions() {
     const form = lb?.querySelector(".Lightbox-header-options-inline");
-    // the selects carry no reliable id, their option values identify them
-    const select = (value: string) =>
-      form?.querySelector<HTMLOptionElement>(`option[value="${value}"]`)?.parentElement as
-        | HTMLSelectElement
-        | undefined;
+    const select = optionsSelect;
     const check = (id: string) => form?.querySelector<HTMLInputElement>(`input#${id}`)?.checked ?? false;
     return {
       displayMode: (select("FIT_X")?.value || "FIT_XY") as InzLightbox.DisplayMode,
@@ -662,11 +665,25 @@
     if (L.settings.keys.has(e.code)) e.preventDefault();
   }
 
+  // Switches Stash's own display mode, as picking it in the options would:
+  // Stash stores it and React's onChange takes the synthetic event.
+  function setDisplayMode(mode: InzLightbox.DisplayMode): void {
+    const select = optionsSelect("FIT_X");
+    if (!select || select.value === mode) return;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, mode);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
   // Keys zoom about the centre of the visible part of the image, so an image
   // moved off-centre stays where it is.
   function run(action: InzLightbox.Action, o: Owned, e: KeyboardEvent): void {
     const { x: cx, y: cy } = L.visibleCenter(o.v, o.nat, o.size);
     const scaleTo = (s: number, keepFill = false) => update(L.zoomAt(o.v, s, cx, cy), keepFill);
+    // the mode for every image, and the current one rescaled to it in place
+    const mode = (m: InzLightbox.DisplayMode) => {
+      setDisplayMode(m);
+      scaleTo(L.defaultScale(o.nat, o.size, m, stashOptions().scaleUp));
+    };
     if (action === "zoomIn" || action === "zoomOut") {
       // auto-repeat at the OS rate would zoom far too fast
       if (e.repeat && e.timeStamp - lastKeyZoom < KEY_REPEAT_MS) return;
@@ -678,13 +695,13 @@
     stopAnim();
     switch (action) {
       case "original":
-        scaleTo(1);
+        mode("ORIGINAL");
         break;
       case "fitScreen":
-        scaleTo(L.fitScreenScale(o.nat, o.size));
+        mode("FIT_XY");
         break;
       case "fitWidth":
-        scaleTo(L.fitWidthScale(o.nat, o.size));
+        mode("FIT_X");
         break;
       case "fill": {
         // fill the screen -> 100% -> back to where the cycle started
@@ -704,8 +721,10 @@
     }
   }
 
-  // Display mode or scale-up changed in Stash's options: re-place the current image
+  // Display mode or scale-up changed in Stash's options: re-place the current image.
+  // The keys' own synthetic change has placed it already.
   function onChange(e: Event): void {
+    if (!e.isTrusted) return;
     const t = e.target;
     if (!(t instanceof HTMLElement) || !lb?.contains(t) || t.closest(".inzlb-option")) return;
     const isMode = t instanceof HTMLSelectElement && !!t.querySelector('option[value="FIT_X"]');

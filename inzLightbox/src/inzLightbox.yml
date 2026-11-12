@@ -35,7 +35,7 @@ settings:
     type: BOOLEAN
   keyFill:
     displayName: "Key: fill screen / 100% / back"
-    description: Fills the screen, a second press shows 100%, a third returns to where it started. Default Space.
+    description: Current photo only: fills the screen, a second press shows 100%, a third returns to where it started. Default Space.
     type: STRING
   keyZoomIn:
     displayName: "Key: zoom in"
@@ -47,13 +47,13 @@ settings:
     type: STRING
   keyOriginal:
     displayName: "Key: 100%"
-    description: Original size. Default Z.
+    description: Switch the display mode to Original. Default Z.
     type: STRING
   keyFitScreen:
     displayName: "Key: fit to screen"
-    description: Default X.
+    description: Switch the display mode to Fit to screen. Default X.
     type: STRING
   keyFitWidth:
     displayName: "Key: fit horizontally"
-    description: Default C.
+    description: Switch the display mode to Fit horizontally. Default C.
     type: STRING

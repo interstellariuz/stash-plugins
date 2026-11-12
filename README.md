@@ -282,16 +282,18 @@ Makes the image lightbox comfortable for photos. UI only, no backend.
 
 #### Keys
 
-| Default     | Action                                                              |
-| ----------- | ------------------------------------------------------------------- |
-| `Space`     | Fill the screen; again: 100%; a third time: back to where it started |
-| `↑` / `↓`   | Zoom in / out by 15%, animated                                       |
-| `Z`         | 100%                                                                 |
-| `X`         | Fit to screen                                                        |
-| `C`         | Fit horizontally                                                     |
+| Default     | Action                                                                 |
+| ----------- | ---------------------------------------------------------------------- |
+| `Space`     | Fill the screen; again: 100%; a third time: back to where it started   |
+| `↑` / `↓`   | Zoom in / out by 15%, animated                                         |
+| `Z`         | Display mode *Original*                                                |
+| `X`         | Display mode *Fit to screen*                                           |
+| `C`         | Display mode *Fit horizontally*                                        |
 
-These act on the current photo only and change nothing in Stash's own lightbox options. They
-zoom about the middle of the visible part of the photo, so it stays where it was moved. Each
+`Z` `X` `C` switch Stash's own display mode, as the lightbox options do: it is kept, and photos
+not zoomed yet open in it. The current photo takes the new mode's size in place. `Space` and the
+arrows act on the current photo only. All of them zoom about the middle of the visible part of
+the photo, so it stays where it was moved. Each key
 is a setting: a `KeyboardEvent.code` (`Space`, `ArrowUp`, `KeyZ`, `NumpadAdd`), a letter or
 digit (`Z`, `5`), or several separated by commas; empty restores the default, `none` turns the
 action off. Codes are physical keys, so they work under any keyboard layout. `←` `→` `Esc` and
