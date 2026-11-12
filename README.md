@@ -340,12 +340,17 @@ scene player. UI only, no backend, no settings.
 
 - The rectangle is fitted **by its larger side**: all of it stays visible, centred. A
   rectangle drawn on a zoomed video zooms further, until one video pixel covers 8×8
-  screen pixels (32× of the fit for 8K on a 1080p screen); a low-res video still goes to
-  4× of the fit. Hitting the limit says *Max zoom*. One thinner than 8 px is ignored.
-  While dragging, the outline turns dashed when releasing would reset.
-- While zoomed, the player clips the video (`contain: paint`). Unclipped, the zoomed layer
-  in fullscreen grew tens of thousands of pixels wide, and on 8K video that reset the
-  GPU driver (TDR).
+  screen pixels; a low-res video still goes to 4× of the fit. Hitting a limit says
+  *Max zoom*. One thinner than 8 px is ignored. While dragging, the outline turns dashed
+  when releasing would reset.
+- **Hard limit:** the zoomed player is never larger than 16384 device pixels on its long
+  side (D3D11's largest texture). The GPU is handed the whole scaled video, clipped or
+  not, and an 8K video zoomed to ~60000 px reset the NVIDIA driver (TDR). The limit
+  depends on the player's size, so it is checked on every change of the view, size and
+  stream: entering fullscreen with a zoomed view scales it down to fit. For 8K this
+  caps zoom at about 2× its own pixels (853% of the fit on a 1080p screen, 427% on 4K).
+- While zoomed, the player also clips the video (`contain: paint`): in fullscreen it is
+  out of `.video-wrapper`'s clip.
 - `Alt` moves the video with no limits; `Ctrl` + a drag up or left brings it back.
 - A drag never pauses or plays the video. A `Ctrl` / `Alt` click without movement is an
   ordinary click. Releasing `Alt` after a drag does not open the browser menu.
@@ -360,8 +365,11 @@ Both sit next to the fullscreen button.
 
 | Button                    | Cycles through                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------- |
-| `FIT` / `CROP` / `1:1`    | *Fit to screen* (Stash's own) → *Crop* (fills the player, edges cut off) → *100%* |
+| Fit mode                  | *Fit to screen* (Stash's own) → *Crop* (fills the player, edges cut off) → *100%* |
 | Rotate icon               | *Landscape* → *Portrait* → *Auto-rotate*, locking the device orientation         |
+
+The fit mode icon is MX Player's for the current mode: a rounded frame with arrows out of
+the centre (fit), with a filled inset (crop), or with a square inset (100%).
 
 - *100%* is one video pixel per physical screen pixel (`devicePixelRatio` included): a 4K
   video on a 1080p screen is shown at 200% of the fit, and the message on switching says

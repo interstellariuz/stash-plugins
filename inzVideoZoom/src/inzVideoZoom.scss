@@ -29,13 +29,7 @@
   cursor: grabbing !important;
 }
 
-.video-js .inzvz-fit-button .inzvz-icon {
-  font-size: 1.1em;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 3em;
-}
-
+.video-js .inzvz-fit-button,
 .video-js .inzvz-orient-button {
   .inzvz-icon {
     align-items: center;
@@ -43,7 +37,9 @@
     height: 100%;
     justify-content: center;
   }
+}
 
+.video-js .inzvz-orient-button {
   // an orientation picked here, not Stash's default handling
   &.inzvz-orient-set .inzvz-icon {
     color: #4fa3ff;

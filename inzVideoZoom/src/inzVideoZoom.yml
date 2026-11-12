@@ -1,6 +1,6 @@
 name: INZ Video Zoom
 description: PotPlayer-style mouse zoom and pan (Ctrl + drag a rectangle, Alt + drag) and MX Player-style fit mode (fit, crop, 100%) and orientation buttons for the scene player.
-version: 1.1.1
+version: 1.1.2
 
 ui:
   javascript:

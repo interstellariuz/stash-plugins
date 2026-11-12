@@ -37,11 +37,15 @@
   const SLOP = 4;
   // a right-down drag thinner than this is ignored rather than zoomed absurdly far
   const MIN_RECT = 8;
-  // zoom stops at 8x8 screen pixels per video pixel: an 8K video at 64x of the fit
-  // took the GPU driver down; low-res video still gets 4x of the fit
+  // Hard limit on the zoomed video's size in device pixels: the GPU gets the whole
+  // scaled quad, clip or not, and an 8K video ~60000 px wide reset the NVIDIA driver
+  // (TDR). 16384 is D3D11's largest texture side. Enforced on every view change, as
+  // the player's size and the stream's resolution change under a kept view.
+  const MAX_LAYER_PX = 16384;
+  // within it, zoom stops at 8x8 screen pixels per video pixel; low-res video still
+  // gets 4x of the fit
   const MAX_NATIVE = 8;
   const MIN_MAX_SCALE = 4;
-  const MAX_SCALE = 64;
   const TOAST_MS = 900;
   const IDENTITY: View = { s: 1, x: 0, y: 0 };
   // gestures do not start on the player's own controls
@@ -49,10 +53,18 @@
   const STORE_KEY = "inzVideoZoom";
 
   const FIT_MODES: FitMode[] = ["fit", "crop", "native"];
-  const FIT_LABEL: Record<FitMode, [string, string]> = {
-    fit: ["FIT", "Fit to screen"],
-    crop: ["CROP", "Crop"],
-    native: ["1:1", "100%"],
+  const FIT_LABEL: Record<FitMode, string> = { fit: "Fit to screen", crop: "Crop", native: "100%" };
+  // MX Player's: a rounded frame with arrows out of the centre, a square inset in it
+  // (100%), or a fill inset in it (crop)
+  const FRAME = `<rect x="2" y="4" width="20" height="16" rx="3.5" fill="none" stroke="currentColor" stroke-width="2"/>`;
+  const svg = (inner: string) =>
+    `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${FRAME}${inner}</svg>`;
+  const FIT_ICON: Record<FitMode, string> = {
+    fit: svg(
+      `<path d="M11 12H6.5m0 0 2.5-2.5M6.5 12l2.5 2.5M13 12h4.5m0 0L15 9.5m2.5 2.5L15 14.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
+    ),
+    native: svg(`<rect x="8" y="8" width="8" height="8" rx="1.5" fill="currentColor"/>`),
+    crop: svg(`<rect x="5.5" y="7.5" width="13" height="9" rx="1.5" fill="currentColor"/>`),
   };
   const ORIENT_NEXT: Record<Orient, Orient> = { landscape: "portrait", portrait: "auto", auto: "landscape" };
   const ORIENT_LABEL: Record<Orient, string> = { landscape: "Landscape", portrait: "Portrait", auto: "Auto-rotate" };
@@ -130,7 +142,23 @@
    * View
    * ---------------------------------------------------------------- */
 
-  function apply(v: View): void {
+  /** Largest scale that keeps the zoomed player box within MAX_LAYER_PX. */
+  function safeScale(): number {
+    const p = player;
+    const side = p ? Math.max(p.clientWidth, p.clientHeight) * devicePixelRatio : 0;
+    return side > 0 ? MAX_LAYER_PX / side : 1;
+  }
+
+  /** Scaled down about the player's centre to the safe scale, when beyond it. */
+  function bounded(v: View): View {
+    const lim = safeScale();
+    if (v.s <= lim) return v;
+    const k = lim / v.s;
+    return { s: lim, x: 0.5 - (0.5 - v.x) * k, y: 0.5 - (0.5 - v.y) * k };
+  }
+
+  function apply(next: View): void {
+    const v = bounded(next);
     view = v;
     if (!player) return;
     const on = v.s !== 1 || v.x !== 0 || v.y !== 0;
@@ -157,7 +185,7 @@
 
   function maxScale(): number {
     const n = nativeScale();
-    return n === null ? MIN_MAX_SCALE : Math.min(MAX_SCALE, Math.max(MIN_MAX_SCALE, n * MAX_NATIVE));
+    return Math.min(safeScale(), n === null ? MIN_MAX_SCALE : Math.max(MIN_MAX_SCALE, n * MAX_NATIVE));
   }
 
   /** The fit mode's placement, centred; Stash's fit until the video's size is known. */
@@ -191,8 +219,9 @@
     apply({ s, x: (W / 2 - px * s) / W, y: (H / 2 - py * s) / H });
   }
 
+  // a kept view is checked again: a larger player lowers the safe scale
   function onResize(): void {
-    if (!custom) apply(modeView());
+    apply(custom ? view : modeView());
   }
 
   /* ---------------------------------------------------------------- *
@@ -270,11 +299,11 @@
 
   function labelButtons(): void {
     const fit = player?.querySelector(".inzvz-fit-button");
-    if (fit) {
-      const [short, long] = FIT_LABEL[fitMode];
-      fit.querySelector(".inzvz-icon")!.textContent = short;
-      fit.querySelector(".vjs-control-text")!.textContent = `Fit mode: ${long}`;
-      fit.setAttribute("title", `Fit mode: ${long}`);
+    if (fit instanceof HTMLElement && fit.dataset.mode !== fitMode) {
+      fit.dataset.mode = fitMode;
+      fit.querySelector(".inzvz-icon")!.innerHTML = FIT_ICON[fitMode];
+      fit.querySelector(".vjs-control-text")!.textContent = `Fit mode: ${FIT_LABEL[fitMode]}`;
+      fit.setAttribute("title", `Fit mode: ${FIT_LABEL[fitMode]}`);
     }
     const rot = player?.querySelector(".inzvz-orient-button");
     if (rot) {
@@ -293,7 +322,7 @@
     const v = video();
     // 100% names the zoom it needs over Stash's fit: 200% for 4K on a 1080p screen
     const extra = fitMode === "native" && usable(v) ? ` (${Math.round(view.s * 100)}% zoom)` : "";
-    showToast(FIT_LABEL[fitMode][1] + extra);
+    showToast(FIT_LABEL[fitMode] + extra);
   }
 
   /* ---------------------------------------------------------------- *
@@ -473,7 +502,7 @@
 
   // the fit mode needs the video's size, unknown at loadstart
   function onMetadata(e: Event): void {
-    if (e.target === video() && !custom) apply(modeView());
+    if (e.target === video()) apply(custom ? view : modeView());
   }
 
   /* ---------------------------------------------------------------- *
