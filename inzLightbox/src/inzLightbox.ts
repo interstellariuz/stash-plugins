@@ -779,6 +779,8 @@
       setKeepView(false);
       setDisplayMode(m);
       scaleTo(L.defaultScale(o.nat, o.size, m, stashOptions().scaleUp));
+      // also when nothing changed, so a repeated key visibly did something
+      showIndicator(`${Math.round(o.v.s * 100)}%`);
     };
     if (action === "zoomIn" || action === "zoomOut") {
       // auto-repeat at the OS rate would zoom far too fast
