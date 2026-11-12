@@ -1,0 +1,9 @@
+name: INZ Video Zoom
+description: PotPlayer-style mouse zoom and pan for the scene player. Ctrl + drag right and down zooms into a rectangle, any other direction resets; Alt + drag moves the video.
+version: 1.0.0
+
+ui:
+  javascript:
+    - inzVideoZoom.js
+  css:
+    - inzVideoZoom.css

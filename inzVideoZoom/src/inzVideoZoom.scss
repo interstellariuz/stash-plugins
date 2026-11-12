@@ -1,0 +1,38 @@
+// The zoomed video: top-left at (x, y) in player-box percentages, scaled from the
+// corner. Subtitles, poster and controls stay where they are.
+.video-js.inzvz-on video.vjs-tech {
+  transform: translate(var(--inzvz-x, 0%), var(--inzvz-y, 0%)) scale(var(--inzvz-s, 1));
+  transform-origin: 0 0;
+}
+
+// !important beats video.js hiding the cursor over an inactive playing player
+.video-js.inzvz-ctrl,
+.video-js.inzvz-drawing,
+.video-js.inzvz-drawing * {
+  cursor: crosshair !important;
+}
+
+.video-js.inzvz-alt {
+  cursor: grab !important;
+}
+
+.video-js.inzvz-grabbing,
+.video-js.inzvz-grabbing * {
+  cursor: grabbing !important;
+}
+
+.inzvz-rect {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+
+  // released like this, the drag resets instead of zooming
+  &.inzvz-rect-reset {
+    background: transparent;
+    border-style: dashed;
+    opacity: 0.6;
+  }
+}

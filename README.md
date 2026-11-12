@@ -327,6 +327,40 @@ own zoom stays at 1; `Z` and `X` take its place.
 
 **Stash v0.32.0 or newer.**
 
+### inz-video-zoom — *INZ Video Zoom*
+
+PotPlayer's mouse zoom and pan for the scene player. UI only, no backend, no settings.
+
+| Gesture                              | Effect                                                         |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `Ctrl` + drag right and down         | Zoom into the rectangle                                        |
+| `Ctrl` + drag up or left (any part)  | Reset zoom and position                                        |
+| `Alt` + drag                         | Move the video, at any zoom, off screen too                    |
+
+- The rectangle is fitted **by its larger side**: all of it stays visible, centred. A
+  rectangle drawn on a zoomed video zooms further, up to 64×. One thinner than 8 px is
+  ignored. While dragging, the outline turns dashed when releasing would reset.
+- `Alt` moves the video with no limits; `Ctrl` + a drag up or left brings it back.
+- A drag never pauses or plays the video. A `Ctrl` / `Alt` click without movement is an
+  ordinary click. Releasing `Alt` after a drag does not open the browser menu.
+- The view survives fullscreen and resizing, and a stream switch within the scene (the
+  source selector, transcode fallback). Another scene starts unzoomed.
+- Only the picture moves: subtitles and the controls stay put, and gestures do not
+  start on the control bar. Nothing happens in VR mode or while casting.
+
+#### How it hooks in
+
+Same approach as inz-lightbox: capture listeners on `window` take the gestures before
+video.js does, and the `<video>` is placed through CSS variables on the player. The position
+is a fraction of the player box, so `translate()` percentages carry it through any resize.
+It depends on these class names: `VideoPlayer`, `video-js`, `vjs-tech`, `vjs-control-bar`,
+`vjs-menu`, `vjs-modal-dialog`, `vjs-button`. The scene is recognised by the `/scene/<id>/`
+part of the stream URL.
+
+#### Requirements
+
+**Stash v0.32.0 or newer.**
+
 ## Development
 
 ```
