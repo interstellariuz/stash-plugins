@@ -6,11 +6,3 @@ version: 1.0.1
 date: "2026-11-12 00:00:00"
 requires: []
 source_repository: "https://interstellariuz.github.io/stash-plugins/index.yml"
-files:
-- inzVrGenerate.js
-- inzVrGenerate.py
-- inzVrGenerate.yml
-- vrformat.py
-- vrgen.py
-- vrlog.py
-- vrstash.py

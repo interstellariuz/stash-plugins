@@ -5,13 +5,13 @@ interface: raw
 errLog: error
 exec:
   - python3
-  - "{pluginDir}/inzRecords.py"
+  - "{pluginDir}/backend.py"
 
 ui:
   javascript:
-    - inzRecords.js
+    - index.js
   css:
-    - inzRecords.css
+    - index.css
 
 settings:
   skipSource:

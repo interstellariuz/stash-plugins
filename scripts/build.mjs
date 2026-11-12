@@ -1,7 +1,7 @@
 // Build every plugin, or the ones named, into <plugin>/dist/<id>/.
 //
 // A plugin is a directory with src/manifest. Its UI is one bundle: esbuild
-// starts at src/<id>.tsx (or .ts), pulls in what it imports, ../../shared
+// starts at src/index.tsx (or .ts), pulls in what it imports, ../../shared
 // included, and wraps it all in an IIFE, so nothing reaches window. Styles:
 // src/*.scss compiled, src/*.css copied. Python and the plugin yml copied.
 // The manifest's files list is written from what landed in dist, after
@@ -48,11 +48,11 @@ async function buildOne(dir) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
 
-  const entry = [`${id}.tsx`, `${id}.ts`].map((f) => join(src, f)).find((f) => existsSync(f));
+  const entry = ["index.tsx", "index.ts"].map((f) => join(src, f)).find((f) => existsSync(f));
   if (entry) {
     await esbuild.build({
       entryPoints: [entry],
-      outfile: join(out, `${id}.js`),
+      outfile: join(out, "index.js"),
       bundle: true,
       format: "iife",
       platform: "browser",

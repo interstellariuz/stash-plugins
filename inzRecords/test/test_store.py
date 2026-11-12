@@ -10,7 +10,7 @@ import unittest
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 sys.path.insert(0, SRC)
 
-import inzRecords as store  # noqa: E402
+import backend as store  # noqa: E402
 
 
 def record(url, *downloads, **fields):
@@ -106,7 +106,7 @@ class ProtocolTest(unittest.TestCase):
     def call(self, directory, args):
         payload = {"server_connection": {"Dir": directory}, "args": args}
         out = subprocess.run(
-            [sys.executable, os.path.join(SRC, "inzRecords.py")],
+            [sys.executable, os.path.join(SRC, "backend.py")],
             input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", check=True,
         )
         return json.loads(out.stdout)

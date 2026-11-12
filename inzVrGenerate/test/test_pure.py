@@ -8,9 +8,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-import inzVrGenerate  # noqa: E402
 import vrformat  # noqa: E402
 import vrgen  # noqa: E402
+import vrtask  # noqa: E402
 
 
 class FromFilenameTest(unittest.TestCase):
@@ -89,10 +89,10 @@ class IsUnderTest(unittest.TestCase):
     def test_folder_and_inside_only(self):
         with tempfile.TemporaryDirectory() as root:
             folder = os.path.join(root, "vr")
-            self.assertTrue(inzVrGenerate.is_under(os.path.join(folder, "a.mp4"), folder))
-            self.assertTrue(inzVrGenerate.is_under(folder, folder))
-            self.assertFalse(inzVrGenerate.is_under(os.path.join(root, "vr2", "a.mp4"), folder))
-            self.assertFalse(inzVrGenerate.is_under("", folder))
+            self.assertTrue(vrtask.is_under(os.path.join(folder, "a.mp4"), folder))
+            self.assertTrue(vrtask.is_under(folder, folder))
+            self.assertFalse(vrtask.is_under(os.path.join(root, "vr2", "a.mp4"), folder))
+            self.assertFalse(vrtask.is_under("", folder))
 
 
 if __name__ == "__main__":

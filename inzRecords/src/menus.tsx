@@ -3,6 +3,7 @@
 import { Bootstrap, React, useIntl } from "../../shared/stash";
 import { insertAfterKey, insertOperation, replaceListMenu, safely } from "../../shared/tree";
 import { menuText } from "./dialog";
+import { PLUGIN_ID } from "./ids";
 import type { Kind } from "./plan";
 import { openImport } from "./store";
 import { useText } from "./text";
@@ -20,21 +21,21 @@ export function patchScenePage(props: any, _context: any, result: any) {
   if (!sceneId) return result;
   const item = (
     <Dropdown.Item
-      key="inz-records-import"
+      key="records-import"
       className="bg-secondary text-white"
       onClick={() => openImport({ scenes: [String(sceneId)] })}
     >
       <MenuLabel />
     </Dropdown.Item>
   );
-  return safely("inzRecords", () => insertAfterKey(result, "generate", item), result);
+  return safely(PLUGIN_ID, () => insertAfterKey(result, "generate", item), result);
 }
 
 /** Scene and gallery lists: an operation for the selection */
 export function patchList(kind: Kind) {
   return (_props: any, _context: any, result: any) =>
     safely(
-      "inzRecords",
+      PLUGIN_ID,
       () =>
         replaceListMenu(result, (menu, selected) => {
           const entry = {

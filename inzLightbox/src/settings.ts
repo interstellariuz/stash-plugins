@@ -1,6 +1,6 @@
 /**
  * Plugin settings (inzLightbox.yml) and the values in effect. Read live and
- * written back through shared/config.ts, by inzLightbox.ts.
+ * written back through shared/config.ts, by index.ts.
  */
 
 

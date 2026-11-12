@@ -110,7 +110,7 @@ class Stash:
 
 
 SCHEMA_QUERY = """
-query InzVrSchema {
+query VrSchema {
   cfg: __type(name: "ConfigGeneralResult") { fields { name } }
 }
 """
@@ -141,7 +141,7 @@ WANTED_CONFIG_FIELDS = (
 )
 
 SCENE_FRAGMENT = """
-fragment InzVrScene on Scene {
+fragment VrScene on Scene {
   id
   title
   files { path }
@@ -150,24 +150,24 @@ fragment InzVrScene on Scene {
 """
 
 SCENES_BY_ID = """
-query InzVrScenesById($ids: [ID!]) {
-  findScenes(ids: $ids, filter: { per_page: -1 }) { scenes { ...InzVrScene } }
+query VrScenesById($ids: [ID!]) {
+  findScenes(ids: $ids, filter: { per_page: -1 }) { scenes { ...VrScene } }
 }
 """ + SCENE_FRAGMENT
 
 # One query serves both "everything" and "under this folder": an unset path
 # criterion is simply not applied.
 SCENES_PAGE = """
-query InzVrScenes($path: StringCriterionInput, $page: Int!, $per: Int!) {
+query VrScenes($path: StringCriterionInput, $page: Int!, $per: Int!) {
   findScenes(
     scene_filter: { path: $path }
     filter: { page: $page, per_page: $per, sort: "id", direction: ASC }
-  ) { scenes { ...InzVrScene } }
+  ) { scenes { ...VrScene } }
 }
 """ + SCENE_FRAGMENT
 
 SCENE_UPDATE = """
-mutation InzVrSceneUpdate($input: SceneUpdateInput!) {
+mutation VrSceneUpdate($input: SceneUpdateInput!) {
   sceneUpdate(input: $input) { id }
 }
 """
@@ -189,7 +189,7 @@ def config_query(fields):
     skipped = [f for f in WANTED_CONFIG_FIELDS if f not in fields]
     if skipped:
         vrlog.debug("this stash has no %s, using the defaults for them" % ", ".join(skipped))
-    return "query InzVrConfig { configuration { general { %s } } }" % "\n      ".join(selection)
+    return "query VrConfig { configuration { general { %s } } }" % "\n      ".join(selection)
 
 
 def get_config(stash):

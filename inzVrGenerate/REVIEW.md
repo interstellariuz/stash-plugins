@@ -7,9 +7,9 @@ Review date: 2026-08-16.
 > inspection. The line numbers in the links below have been updated for the edits.
 > Next up are #12 (tests + CI) and #9-10 (an `auto` default / a geometry check).
 
-Scope: [src/inzVrGenerate.py](src/inzVrGenerate.py), [src/vrgen.py](src/vrgen.py),
+Scope: [src/vrtask.py](src/vrtask.py), [src/vrgen.py](src/vrgen.py),
 [src/vrformat.py](src/vrformat.py), [src/vrstash.py](src/vrstash.py), [src/vrlog.py](src/vrlog.py),
-[src/inzVrGenerate.tsx](src/inzVrGenerate.tsx), [src/inzVrGenerate.yml](src/inzVrGenerate.yml),
+[src/index.tsx](src/index.tsx), [src/inzVrGenerate.yml](src/inzVrGenerate.yml),
 [src/manifest](src/manifest), the build and packaging in [../package.json](../package.json) /
 [../scripts/](../scripts/), and CI in [../.github/workflows/pages.yml](../.github/workflows/pages.yml).
 `dist/` was checked against `src/` — they are in sync.
@@ -28,20 +28,20 @@ TSX agree") are recorded in prose alone.
 
 | # | Finding | Where | Class | Status |
 |---|---------|-------|-------|--------|
-| 1 | `ffprobe` runs before the "is there anything to do" check | `inzVrGenerate.py` | blocking | fixed |
+| 1 | `ffprobe` runs before the "is there anything to do" check | `vrtask.py` | blocking | fixed |
 | 2 | Encoding has no timeout at all (`timeout` is a dead knob) | `vrgen.py` | blocking | fixed |
 | 3 | Cancelling a task leaves orphaned `ffmpeg` processes | `vrgen.py` | blocking | fixed |
 | 4 | `Stash` is not thread-safe yet is used from the workers | `vrstash.py` | blocking | open |
 | 5 | The stderr encoding kills the whole run on Windows | `vrlog.py` | blocking | fixed |
 | 6 | `exec: python3` does not start on a Windows Stash install | `inzVrGenerate.yml` | blocking | not confirmed |
 | 7 | The sprite spills to disk far too late | `vrgen.py` | major | open |
-| 8 | The cover is always rebuilt, and `sceneUpdate` shakes the whole scene | `inzVrGenerate.py`, `vrstash.py` | major | open |
-| 9 | A dangerous default: `format: "sbs"` plus Generate over the whole library | `inzVrGenerate.tsx` | major | open |
+| 8 | The cover is always rebuilt, and `sceneUpdate` shakes the whole scene | `vrtask.py`, `vrstash.py` | major | open |
+| 9 | A dangerous default: `format: "sbs"` plus Generate over the whole library | `index.tsx` | major | open |
 | 10 | False positives on short tokens (`LR`, `TB`, `OU`, `MONO`) | `vrformat.py` | major | open |
 | 11 | The format table is duplicated three times | `vrformat.py`, `.tsx`, README | major | open |
 | 12 | There is not a single test, and CI does not run them | the repository | process | partly |
 | 13 | Progress bypasses its own rate limit | `vrlog.py` | process | open |
-| 14 | The whole library is materialised before the first ffmpeg starts | `inzVrGenerate.py`, `vrstash.py` | process | open |
+| 14 | The whole library is materialised before the first ffmpeg starts | `vrtask.py`, `vrstash.py` | process | open |
 | 15 | Small things (17 items) | everywhere | minor | partly (1/17) |
 
 ### Order of work
@@ -67,8 +67,8 @@ failed before the fixes.
 ### 1. `ffprobe` runs before the "is there anything to do" check
 
 **Status: fixed (2026-08-16).** `todo = _outstanding(...)` now sits at
-[inzVrGenerate.py:233](src/inzVrGenerate.py#L233) and `probe()` at
-[line 239](src/inzVrGenerate.py#L239), after the early exit. The order is explained by a
+[vrtask.py:233](src/vrtask.py#L233) and `probe()` at
+[line 239](src/vrtask.py#L239), after the early exit. The order is explained by a
 comment in place. `fmt` deliberately stays above both: otherwise a 2D file would get
 "up to date" instead of a clear "nothing in the filename says which VR format this is".
 Verified with a scenario where `vrgen.probe` is replaced by a throwing function: a scene
@@ -76,7 +76,7 @@ with ready artifacts goes to `skipped` without calling probe once, while a scene
 missing preview does call it.
 
 The caveat still stands: with covers on, `todo` is never empty
-([lines 282-283](src/inzVrGenerate.py#L282-L283)), so the gain goes to "previews +
+([lines 282-283](src/vrtask.py#L282-L283)), so the gain goes to "previews +
 sprites" runs — the typical case and the UI default. See #8: a cover journal will remove
 that too.
 
@@ -191,7 +191,7 @@ does not support `reconfigure`.
 
 The original finding: `print(..., file=sys.stderr)` without an explicit encoding. Under
 cp1251/cp866 a path with Cyrillic characters raised `UnicodeEncodeError` inside a worker.
-Then the chain in [`process_scene`](src/inzVrGenerate.py#L255-L258): the exception is
+Then the chain in [`process_scene`](src/vrtask.py#L255-L258): the exception is
 caught, the handler calls `vrlog.error(...)` with the same `label` — and fails again,
 outwards this time. `pool.map` raised it on iteration and **aborted the whole run**.
 
@@ -249,7 +249,7 @@ spill in advance and write each frame to a file right after capture.
 ### 8. The cover is always rebuilt, and `sceneUpdate` shakes the whole scene
 
 The "covers are always in `todo`" decision is documented and justified
-([inzVrGenerate.py:267-289](src/inzVrGenerate.py#L267-L289)), but it has an invisible
+([vrtask.py:267-289](src/vrtask.py#L267-L289)), but it has an invisible
 price: [`set_cover`](src/vrstash.py#L236) goes through `sceneUpdate`, which updates
 `updated_at` and fires the `Scene.Update.Post` hooks of other plugins. A repeat run over
 the library with covers=on reshuffles the "recently updated" sort order and pokes other
@@ -262,8 +262,8 @@ and removes the caveat from #1.
 
 ### 9. A dangerous default: `format: "sbs"` plus Generate over the whole library
 
-[`defaultOptions()`](src/inzVrGenerate.tsx#L135-L144) returns `format: "sbs"`, while
-[`VrTaskButtons`](src/inzVrGenerate.tsx#L987) does `queue(options, {})` — the whole
+[`defaultOptions()`](src/index.tsx#L135-L144) returns `format: "sbs"`, while
+[`VrTaskButtons`](src/index.tsx#L987) does `queue(options, {})` — the whole
 library, without confirmation. An explicit format is applied to every scene, 2D
 included. The arithmetic checks out:
 
@@ -298,7 +298,7 @@ word.
 ### 11. The format table is duplicated three times
 
 [vrformat.py:35-52](src/vrformat.py#L35-L52),
-[inzVrGenerate.tsx:92-102](src/inzVrGenerate.tsx#L92-L102) and the table in the
+[index.tsx:92-102](src/index.tsx#L92-L102) and the table in the
 [README](../README.md#L120-L129). As of this review all eight rows agree — checked by
 hand — but that is held together by attention alone.
 
@@ -342,7 +342,7 @@ PRs that calls the tests, `tsc --noEmit` and `check:graphql` with a Stash checko
 
 [vrlog.py:166](src/vrlog.py#L166) — `done()` always sends `force=True`, so the "no more
 than once a second" limit is disabled in precisely the hottest place. Plus
-[`vrlog.debug("%s: up to date")`](src/inzVrGenerate.py#L236) on every skipped scene. A
+[`vrlog.debug("%s: up to date")`](src/vrtask.py#L236) on every skipped scene. A
 run over 30k scenes where almost everything is skipped means 60k lines with `flush=True`
 under a shared lock — while the module docstring itself warns that "a stream of such
 messages slows the plugin down more than the work does".
@@ -352,9 +352,9 @@ date" into a single summary line.
 
 ### 14. The whole library is materialised before the first ffmpeg starts
 
-[`collect_scenes`](src/inzVrGenerate.py#L357) does `list(iter_scenes(stash))` at
+[`collect_scenes`](src/vrtask.py#L357) does `list(iter_scenes(stash))` at
 `per_page=100` ([vrstash.py:208](src/vrstash.py#L208)) — 500 round trips for 50k scenes
-before any work begins. [`pool.map`](src/inzVrGenerate.py#L424) immediately creates
+before any work begins. [`pool.map`](src/vrtask.py#L424) immediately creates
 futures for every scene.
 
 **Solution.** Streaming processing (generator -> queue -> workers), `per_page` raised to
@@ -362,7 +362,7 @@ futures for every scene.
 the selection on the server through `path` + `MATCHES_REGEX` with the token list; the
 modifier is worth running through `check:graphql` first.
 
-Alongside: [`is_under`](src/inzVrGenerate.py#L352) recomputes `os.path.realpath(folder)`
+Alongside: [`is_under`](src/vrtask.py#L352) recomputes `os.path.realpath(folder)`
 for every scene — resolve the folder once in `collect_scenes`.
 
 ---
@@ -379,10 +379,10 @@ for every scene — resolve the folder once in `collect_scenes`.
 - [`probe`](src/vrgen.py#L326) validates `width` / `height` but not `duration <= 0` —
   which is a guaranteed preview failure (`-t 0.000`, and then a retry on top) and a
   degenerate vtt. Better a `Skip` with clear text.
-- [`Context.tally`](src/inzVrGenerate.py#L170-L175) is overloaded: an unknown key
+- [`Context.tally`](src/vrtask.py#L170-L175) is overloaded: an unknown key
   silently starts a new artifact counter, so a typo never surfaces.
 - [`_exclude_value`](src/vrgen.py#L511-L519) swallows `ValueError` -> 0.0 without a word;
-  [`workers`](src/inzVrGenerate.py#L421) is silently capped at 16.
+  [`workers`](src/vrtask.py#L421) is silently capped at 16.
 - [`iter_scenes`](src/vrstash.py#L223) quotes the path as `'"%s"'` — a path with a `"`
   (possible on Linux) breaks the filter.
 - [`CERT_NONE`](src/vrstash.py#L69-L71) is applied to the configured host as well, not
@@ -397,19 +397,19 @@ for every scene — resolve the folder once in `collect_scenes`.
 
 ### TSX
 
-- [The `useMemo` in `SceneListOperations`](src/inzVrGenerate.tsx#L789-L804) depends on
+- [The `useMemo` in `SceneListOperations`](src/index.tsx#L789-L804) depends on
   `element`, whose identity is new on every render — the memoisation does not work.
 - There is no guard against registering the patches twice: if the script runs twice, the
   menu item is duplicated. Cheaply fixed with a flag on `window`.
-- ["Our job"](src/inzVrGenerate.tsx#L1076-L1077) is identified by the substring
+- ["Our job"](src/index.tsx#L1076-L1077) is identified by the substring
   `"Generate as VR"` in `description`. False positives, plus a complete loss of
   indication if `RUN_PLUGIN_TASK` did not build — the `description` is then not sent at
   all.
-- [`edited`](src/inzVrGenerate.tsx#L165) is module-level: once the options are changed,
+- [`edited`](src/index.tsx#L165) is module-level: once the options are changed,
   the tab ignores the server value forever, and changes from another tab are not picked
   up.
 - The readout-to-wording coupling in [`_ARTIFACT_TEXT`](src/vrlog.py#L96-L101) through
-  the [`RUN_LINE`](src/inzVrGenerate.tsx#L1031-L1032) regex is documented but fragile.
+  the [`RUN_LINE`](src/index.tsx#L1031-L1032) regex is documented but fragile.
   More robust: a machine-readable marker in the line
   (`[vrgen] {"a":"sprite","p":"..."}`) plus human-readable text beside it.
 - ~~Hardcoded English strings ("VR format", "Currently generating", subHeading) mixed in
@@ -418,11 +418,11 @@ for every scene — resolve the folder once in `collect_scenes`.
 ### Fixed in section 15
 
 **UI strings (2026-08-16).** All the text the plugin wrote itself was gathered into one
-table, [`TEXT`](src/inzVrGenerate.tsx#L103), with ids in the `inzVrGenerate.` namespace —
+table, [`TEXT`](src/index.tsx#L103), with ids in the `inzVrGenerate.` namespace —
 the dialog title and both menu items, "VR format" with its caption, nine format names and
 nine token hints, "Currently generating", "Not generated by this plugin yet." and the
 subHeading of the block in Settings -> Tasks. It is read through
-[`useText()`](src/inzVrGenerate.tsx#L135), which looks in the Stash catalogue first and
+[`useText()`](src/index.tsx#L135), which looks in the Stash catalogue first and
 only then takes the default from the table.
 
 Three decisions worth remembering:
@@ -430,7 +430,7 @@ Three decisions worth remembering:
 - **Not `defaultMessage`.** `formatMessage` on an unknown id renders the id itself and
   writes a missing-translation warning to the console on every render. So the check goes
   through `intl.messages[id]`, and the `Intl.useIntl` type in
-  [IPluginApi](src/inzVrGenerate.tsx#L48-L58) gained a `messages` field. If the field is
+  [IPluginApi](src/index.tsx#L48-L58) gained a `messages` field. If the field is
   absent altogether (a different react-intl version), `?.` falls through to the default,
   that is to today's behaviour.
 - **The language stayed single.** The "English only" rule from
@@ -439,13 +439,13 @@ Three decisions worth remembering:
   locales) overrides any string just as it overrides Stash's own, because Stash flattens
   it into the same dotted keys. Recorded in the README.
 - **The job description is deliberately untranslated.**
-  [`describeRun`](src/inzVrGenerate.tsx#L272) builds it from the new
-  [`JOB_MARKER`](src/inzVrGenerate.tsx#L159) — the default rather than the displayed
+  [`describeRun`](src/index.tsx#L272) builds it from the new
+  [`JOB_MARKER`](src/index.tsx#L159) — the default rather than the displayed
   title: `useVrJobRunning` recognises its own jobs by that string from another tab and
   after a reload, so it is an exchange format rather than interface text. Otherwise
   translating the title would silently kill the readout.
 
-Along the way `FORMATS` [collapsed](src/inzVrGenerate.tsx#L173) to `value` plus two ids,
+Along the way `FORMATS` [collapsed](src/index.tsx#L173) to `value` plus two ids,
 so checking it against `vrformat.py` (#11) now means checking the list of values alone.
 `label`/`tokens` are typed as `TextId`, so a typo in an id does not compile. `tsc` is
 clean, `dist/` rebuilt.

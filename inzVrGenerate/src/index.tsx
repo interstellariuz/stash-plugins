@@ -265,7 +265,7 @@ function useVrOptions(): [IOptions, (v: IOptions) => void] {
 const RUN_PLUGIN_TASK = safely<unknown>(
   PLUGIN_ID,
   () => PluginApi.libraries.Apollo.gql`
-    mutation InzRunPluginTask(
+    mutation RunPluginTaskDescribed(
       $plugin_id: ID!
       $task_name: String!
       $description: String!
@@ -760,7 +760,7 @@ const ScenePageWrapper: React.FC<{ tree: any; sceneId: string }> = ({ tree, scen
 
   const patched = React.useMemo(() => {
     const item = (
-      <Dropdown.Item key="inz-vr-generate" className="bg-secondary text-white" onClick={() => setShowing(true)}>
+      <Dropdown.Item key="vr-generate" className="bg-secondary text-white" onClick={() => setShowing(true)}>
         {`${text("inzVrGenerate.title")}…`}
       </Dropdown.Item>
     );

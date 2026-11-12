@@ -1,4 +1,4 @@
-# stash-inz-plugins
+# stash-plugins
 
 Plugins for [Stash](https://github.com/stashapp/stash).
 
@@ -165,7 +165,7 @@ Stash made — which is the thing being fixed.
   own — the title, the format select and its options, the tasks-page blurb — are English, but each
   has a message id under `inzVrGenerate.`, so a `custom-locales.json` entry with the same id
   replaces it exactly as it would one of Stash's. The ids are the keys of the `TEXT` table at the
-  top of [inzVrGenerate.tsx](inzVrGenerate/src/inzVrGenerate.tsx). The job-queue description is
+  top of [index.tsx](inzVrGenerate/src/index.tsx). The job-queue description is
   deliberately left out: the plugin recognises its own jobs by it.
 
 ### inz-records — *INZ Download Records*
@@ -245,7 +245,7 @@ minutes.
 
 `<Stash config dir>/inzRecords/records.sqlite`, outside the plugin directory so reinstalling the
 plugin keeps it. One row per record (`site` + record key), plus an index of its file names. The
-backend is [inzRecords.py](inzRecords/src/inzRecords.py), Python 3 standard library only (`sqlite3`),
+backend is [backend.py](inzRecords/src/backend.py), Python 3 standard library only (`sqlite3`),
 called through `runPluginOperation`:
 
 | `op`      | args                  | returns                                     |
@@ -426,7 +426,7 @@ npm run package    # zip every dist package and write pages/index.yml
 
 CI runs check, test, build and package on every push to master.
 
-Each plugin's UI is one bundle: esbuild starts at `src/<id>.tsx` (or `.ts`), follows its imports
+Each plugin's UI is one bundle: esbuild starts at `src/index.tsx` (or `.ts`), follows its imports
 and wraps the result in an IIFE, so nothing lands on `window` and the plugin yml lists a single
 script. React, react-bootstrap and the rest are not dependencies: the code borrows Stash's copies
 through `PluginApi` (`react` in devDependencies is only for the tests). The build also compiles

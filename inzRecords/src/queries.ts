@@ -26,22 +26,22 @@ const NAME_FIELDS = `id urls files { basename }`;
 
 export const QUERIES = {
   RUN_OP: `
-    mutation InzRecordsOp($args: Map) {
+    mutation RecordsOp($args: Map) {
       runPluginOperation(plugin_id: "inzRecords", args: $args)
     }`,
 
   SCENES_BY_ID: `
-    query InzRecordsScenes($ids: [ID!]) {
+    query RecordsScenes($ids: [ID!]) {
       findScenes(ids: $ids, filter: { per_page: -1 }) { scenes { ${SCENE_FIELDS} } }
     }`,
 
   GALLERIES_BY_ID: `
-    query InzRecordsGalleries($ids: [ID!]) {
+    query RecordsGalleries($ids: [ID!]) {
       findGalleries(ids: $ids, filter: { per_page: -1 }) { galleries { ${GALLERY_FIELDS} } }
     }`,
 
   SCENES_BY_PATH: `
-    query InzRecordsScenesByPath($path: String!) {
+    query RecordsScenesByPath($path: String!) {
       findScenes(
         scene_filter: { path: { value: $path, modifier: MATCHES_REGEX } }
         filter: { per_page: -1 }
@@ -49,7 +49,7 @@ export const QUERIES = {
     }`,
 
   GALLERIES_BY_PATH: `
-    query InzRecordsGalleriesByPath($path: String!) {
+    query RecordsGalleriesByPath($path: String!) {
       findGalleries(
         gallery_filter: { path: { value: $path, modifier: MATCHES_REGEX } }
         filter: { per_page: -1 }
@@ -57,7 +57,7 @@ export const QUERIES = {
     }`,
 
   SCENE_NAMES_BY_PATH: `
-    query InzRecordsSceneNames($path: String!) {
+    query RecordsSceneNames($path: String!) {
       findScenes(
         scene_filter: { path: { value: $path, modifier: MATCHES_REGEX } }
         filter: { per_page: -1 }
@@ -65,7 +65,7 @@ export const QUERIES = {
     }`,
 
   GALLERY_NAMES_BY_PATH: `
-    query InzRecordsGalleryNames($path: String!) {
+    query RecordsGalleryNames($path: String!) {
       findGalleries(
         gallery_filter: { path: { value: $path, modifier: MATCHES_REGEX } }
         filter: { per_page: -1 }
@@ -73,34 +73,34 @@ export const QUERIES = {
     }`,
 
   DICTIONARIES: `
-    query InzRecordsDictionaries {
+    query RecordsDictionaries {
       findStudios(filter: { per_page: -1 }) { studios { id name aliases } }
       findTags(filter: { per_page: -1 }) { tags { id name aliases } }
       findPerformers(filter: { per_page: -1 }) { performers { id name alias_list } }
     }`,
 
   SCENE_UPDATE: `
-    mutation InzRecordsSceneUpdate($input: SceneUpdateInput!) {
+    mutation RecordsSceneUpdate($input: SceneUpdateInput!) {
       sceneUpdate(input: $input) { id }
     }`,
 
   GALLERY_UPDATE: `
-    mutation InzRecordsGalleryUpdate($input: GalleryUpdateInput!) {
+    mutation RecordsGalleryUpdate($input: GalleryUpdateInput!) {
       galleryUpdate(input: $input) { id }
     }`,
 
   STUDIO_CREATE: `
-    mutation InzRecordsStudioCreate($input: StudioCreateInput!) {
+    mutation RecordsStudioCreate($input: StudioCreateInput!) {
       studioCreate(input: $input) { id }
     }`,
 
   TAG_CREATE: `
-    mutation InzRecordsTagCreate($input: TagCreateInput!) {
+    mutation RecordsTagCreate($input: TagCreateInput!) {
       tagCreate(input: $input) { id }
     }`,
 
   PERFORMER_CREATE: `
-    mutation InzRecordsPerformerCreate($input: PerformerCreateInput!) {
+    mutation RecordsPerformerCreate($input: PerformerCreateInput!) {
       performerCreate(input: $input) { id }
     }`,
 };

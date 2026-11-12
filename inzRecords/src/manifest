@@ -6,10 +6,3 @@ version: 1.1.0
 date: "2026-11-12 00:00:00"
 requires: []
 source_repository: "https://interstellariuz.github.io/stash-plugins/index.yml"
-files:
-- inzRecords.css
-- inzRecords.js
-- inzRecords.py
-- inzRecords.yml
-- queries.js
-- records.js

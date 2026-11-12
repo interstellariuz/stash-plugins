@@ -5,11 +5,11 @@ interface: raw
 errLog: error
 exec:
   - python3
-  - "{pluginDir}/inzVrGenerate.py"
+  - "{pluginDir}/vrtask.py"
 
 ui:
   javascript:
-    - inzVrGenerate.js
+    - index.js
 
 # One task, because runPluginTask needs a name to call and PluginTasks only
 # lists plugins that have at least one. The UI half replaces this plugin's block

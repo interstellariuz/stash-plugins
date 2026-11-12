@@ -54,7 +54,7 @@ async function mutate(name: QueryName, variables: Record<string, unknown>): Prom
   return result.data;
 }
 
-/** One backend op (inzRecords.py) */
+/** One backend op (backend.py) */
 export async function runOp(args: Record<string, unknown>): Promise<any> {
   return (await mutate("RUN_OP", { args })).runPluginOperation;
 }

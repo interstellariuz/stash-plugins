@@ -80,7 +80,7 @@ function dumpVrGenerate(schema) {
     fields[name] = Object.keys(type.getFields()).sort();
   }
 
-  const out = execFileSync(python, [join(root, "scripts", "dump-queries.py")], {
+  const out = execFileSync(python, ["-B", join(root, "scripts", "dump-queries.py")], {
     input: JSON.stringify({ src: pluginSrc, fields }),
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,

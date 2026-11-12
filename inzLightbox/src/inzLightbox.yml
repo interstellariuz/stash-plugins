@@ -4,9 +4,9 @@ version: 1.0.0
 
 ui:
   javascript:
-    - inzLightbox.js
+    - index.js
   css:
-    - inzLightbox.css
+    - index.css
 
 # Key settings take KeyboardEvent.code names (Space, ArrowUp, KeyZ), single
 # letters and digits (Z, 5) or a comma-separated list; empty means the default,
