@@ -1,0 +1,5 @@
+# LF everywhere: these repositories are edited from Windows, and tools there write CRLF
+* text=auto eol=lf
+# cmd.exe misparses labels and goto in LF batch files
+*.cmd text eol=crlf
+*.bat text eol=crlf

@@ -1,0 +1,21 @@
+name: Download Records
+description: Imports the metadata the site userscripts send on download into scenes and galleries, matched by file name.
+version: 1.0.0
+interface: raw
+errLog: error
+exec:
+  - python3
+  - "{pluginDir}/inzRecords.py"
+
+# records.js and queries.js declare the InzRecords namespace inzRecords.js uses,
+# so they load first.
+ui:
+  javascript:
+    - records.js
+    - queries.js
+    - inzRecords.js
+  css:
+    - inzRecords.css
+
+# No tasks and no settings: the store is fed through runPluginOperation and
+# read by the UI the same way.

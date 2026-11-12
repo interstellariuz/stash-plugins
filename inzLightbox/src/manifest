@@ -1,0 +1,15 @@
+id: inzLightbox
+name: INZ Lightbox
+metadata:
+  description: Remembered per-photo zoom, smooth cursor-anchored zoom, hotkeys, auto fullscreen and steadier touch gestures for the image lightbox.
+version: 1.0.0
+date: "2026-11-12 00:00:00"
+requires: []
+source_repository: "https://interstellariuz.github.io/stash-plugins/index.yml"
+files:
+- geometry.js
+- inzLightbox.css
+- inzLightbox.js
+- inzLightbox.yml
+- settings.js
+- store.js

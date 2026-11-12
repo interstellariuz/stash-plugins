@@ -1,0 +1,75 @@
+// Rapid taps in Firefox mobile otherwise select text and raise the copy / select-all bar
+.Lightbox {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+
+  input,
+  select,
+  textarea {
+    -webkit-touch-callout: default;
+    user-select: auto;
+  }
+
+  &.inzlb-grabbing,
+  &.inzlb-grabbing * {
+    cursor: grabbing !important;
+  }
+}
+
+.Lightbox-display {
+  touch-action: none;
+}
+
+// The owned image: top-left at (x, y), scale from the corner. !important beats
+// the inline transform React keeps writing.
+.Lightbox-carousel-image.inzlb-owned {
+  overflow: hidden;
+  position: relative;
+
+  > .Lightbox-carousel-image-wrapper {
+    left: 0;
+    margin: 0;
+    position: absolute;
+    top: 0;
+    transform: translate(var(--inzlb-x, 0px), var(--inzlb-y, 0px)) scale(var(--inzlb-s, 1)) !important;
+    transform-origin: 0 0;
+    width: max-content;
+
+    > img,
+    > video {
+      display: block;
+    }
+  }
+
+  &.inzlb-pan > .Lightbox-carousel-image-wrapper > img,
+  &.inzlb-pan > .Lightbox-carousel-image-wrapper > video {
+    cursor: grab;
+  }
+}
+
+.inzlb-zoom {
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 0.5rem;
+  color: #fff;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  left: 50%;
+  opacity: 0;
+  padding: 0.4rem 1rem;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: opacity 250ms;
+  z-index: 1050;
+
+  &.inzlb-show {
+    opacity: 1;
+    transition-duration: 0ms;
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    display: none;
+  }
+}
