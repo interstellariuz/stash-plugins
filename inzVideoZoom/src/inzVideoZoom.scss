@@ -1,3 +1,11 @@
+// Clips the zoomed video to the player. In fullscreen the player leaves .video-wrapper's
+// clip, and an unclipped layer tens of thousands of pixels wide made the GPU driver reset
+// (TDR) on 8K video.
+.video-js.inzvz-on {
+  contain: paint;
+  overflow: hidden;
+}
+
 // The zoomed video: top-left at (x, y) in player-box percentages, scaled from the
 // corner. Subtitles, poster and controls stay where they are.
 .video-js.inzvz-on video.vjs-tech {

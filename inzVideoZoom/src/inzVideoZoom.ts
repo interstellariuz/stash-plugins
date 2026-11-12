@@ -37,6 +37,10 @@
   const SLOP = 4;
   // a right-down drag thinner than this is ignored rather than zoomed absurdly far
   const MIN_RECT = 8;
+  // zoom stops at 8x8 screen pixels per video pixel: an 8K video at 64x of the fit
+  // took the GPU driver down; low-res video still gets 4x of the fit
+  const MAX_NATIVE = 8;
+  const MIN_MAX_SCALE = 4;
   const MAX_SCALE = 64;
   const TOAST_MS = 900;
   const IDENTITY: View = { s: 1, x: 0, y: 0 };
@@ -143,15 +147,29 @@
     st.setProperty("--inzvz-s", `${v.s}`);
   }
 
+  /** Scale showing one video pixel per device pixel; null until the video's size is known. */
+  function nativeScale(): number | null {
+    const v = video();
+    const p = player;
+    if (!p || !usable(v) || !p.clientWidth || !p.clientHeight) return null;
+    return 1 / (Math.min(p.clientWidth / v.videoWidth, p.clientHeight / v.videoHeight) * devicePixelRatio);
+  }
+
+  function maxScale(): number {
+    const n = nativeScale();
+    return n === null ? MIN_MAX_SCALE : Math.min(MAX_SCALE, Math.max(MIN_MAX_SCALE, n * MAX_NATIVE));
+  }
+
   /** The fit mode's placement, centred; Stash's fit until the video's size is known. */
   function modeView(): View {
     const v = video();
     const p = player;
-    if (fitMode === "fit" || !p || !usable(v) || !p.clientWidth || !p.clientHeight) return IDENTITY;
+    const n = nativeScale();
+    if (fitMode === "fit" || !p || !v || n === null) return IDENTITY;
     const rw = p.clientWidth / v.videoWidth;
     const rh = p.clientHeight / v.videoHeight;
     // crop fills the box; native shows one video pixel per device pixel
-    const s = fitMode === "crop" ? Math.max(rw, rh) / Math.min(rw, rh) : 1 / (Math.min(rw, rh) * devicePixelRatio);
+    const s = fitMode === "crop" ? Math.max(rw, rh) / Math.min(rw, rh) : n;
     return { s, x: (1 - s) / 2, y: (1 - s) / 2 };
   }
 
@@ -162,7 +180,10 @@
 
   /** Fit rectangle r (player pixels) into the box, centred, on top of the current view. */
   function zoomToRect(r: { l: number; t: number; w: number; h: number }, W: number, H: number): void {
-    const s = Math.min(MAX_SCALE, view.s * Math.min(W / r.w, H / r.h));
+    const want = view.s * Math.min(W / r.w, H / r.h);
+    const max = Math.max(maxScale(), view.s);
+    const s = Math.min(max, want);
+    if (want > max) showToast(`Max zoom ${Math.round(s * 100)}%`);
     // the element point under the rectangle's centre goes to the box centre
     const px = (r.l + r.w / 2 - view.x * W) / view.s;
     const py = (r.t + r.h / 2 - view.y * H) / view.s;

@@ -339,8 +339,13 @@ scene player. UI only, no backend, no settings.
 | `Alt` + drag                         | Move the video, at any zoom, off screen too                    |
 
 - The rectangle is fitted **by its larger side**: all of it stays visible, centred. A
-  rectangle drawn on a zoomed video zooms further, up to 64×. One thinner than 8 px is
-  ignored. While dragging, the outline turns dashed when releasing would reset.
+  rectangle drawn on a zoomed video zooms further, until one video pixel covers 8×8
+  screen pixels (32× of the fit for 8K on a 1080p screen); a low-res video still goes to
+  4× of the fit. Hitting the limit says *Max zoom*. One thinner than 8 px is ignored.
+  While dragging, the outline turns dashed when releasing would reset.
+- While zoomed, the player clips the video (`contain: paint`). Unclipped, the zoomed layer
+  in fullscreen grew tens of thousands of pixels wide, and on 8K video that reset the
+  GPU driver (TDR).
 - `Alt` moves the video with no limits; `Ctrl` + a drag up or left brings it back.
 - A drag never pauses or plays the video. A `Ctrl` / `Alt` click without movement is an
   ordinary click. Releasing `Alt` after a drag does not open the browser menu.
