@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "es2019",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": [],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "shared/**/*",
+    "*/src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "*/test/**"
+  ]
+}

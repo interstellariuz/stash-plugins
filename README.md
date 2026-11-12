@@ -418,9 +418,40 @@ The scene is recognised by the `/scene/<id>/` part of the stream URL.
 ## Development
 
 ```
-npm run build      # copy/compile each plugin into <plugin>/dist/<id>/
+npm run check      # type-check sources and tests
+npm test           # <plugin>/test: *.test.ts under node:test, test_*.py under unittest
+npm run build      # each plugin into <plugin>/dist/<id>/; `npm run build -- inzRecords` for one
 npm run package    # zip every dist package and write pages/index.yml
 ```
+
+CI runs check, test, build and package on every push to master.
+
+Each plugin's UI is one bundle: esbuild starts at `src/<id>.tsx` (or `.ts`), follows its imports
+and wraps the result in an IIFE, so nothing lands on `window` and the plugin yml lists a single
+script. React, react-bootstrap and the rest are not dependencies: the code borrows Stash's copies
+through `PluginApi` (`react` in devDependencies is only for the tests). The build also compiles
+`src/*.scss`, copies `src/*.css`, `*.py` and the yml, writes the manifest's `files` from what
+landed in dist, and fails when the manifest and the yml disagree on name, version or
+description.
+
+[shared/](shared/) holds what more than one plugin uses; each bundle gets its own copy, so two
+plugins built at different times never share state or step on each other's version:
+
+| File | What |
+|---|---|
+| `stash.ts` | `PluginApi` and its libraries, typed as far as the plugins use them |
+| `text.ts` | UI strings through Stash's catalogue, with English defaults per plugin |
+| `tree.ts` | finding and editing a … menu in a rendered tree; `safely` around a patch |
+| `config.ts` | plugin settings: read, watch, save one value |
+| `signal.ts` | module state that components re-render on |
+| `storage.ts` | guarded JSON in local/session storage |
+| `util.ts` | plain helpers, no Stash or DOM |
+
+Not to be confused with `shared/` of the pc tree, which holds the record format.
+
+Logic worth testing lives in modules that import nothing from Stash (inzRecords `plan.ts`,
+`status.ts`, `records.ts`; inzLightbox `geometry.ts`, `settings.ts`), so the tests import them
+directly.
 
 `npm run check:graphql` validates every query inzVrGenerate and inzRecords can send against
 Stash's real schema — each plugin's oldest supported release and whatever the checkout is on —

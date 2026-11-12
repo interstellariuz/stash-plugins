@@ -132,17 +132,17 @@ const RECORDS_SAMPLES = {
   PERFORMER_CREATE: { input: { name: "p", urls: ["https://example.com/p"] } },
 };
 
-// queries.ts is a script declaring a namespace: transpile it and read QUERIES
+// queries.ts imports nothing: transpile it to CommonJS and read QUERIES
 function dumpRecords() {
   const source = readFileSync(join(root, "inzRecords", "src", "queries.ts"), "utf8");
   const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.None },
+    compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.CommonJS },
   });
-  const context = {};
-  vm.runInNewContext(`${outputText}\nthis.QUERIES = InzRecords.QUERIES;`, context);
+  const module = { exports: {} };
+  vm.runInNewContext(outputText, { module, exports: module.exports });
 
   const documents = {};
-  for (const [name, query] of Object.entries(context.QUERIES)) {
+  for (const [name, query] of Object.entries(module.exports.QUERIES)) {
     documents[name] = { query, variables: RECORDS_SAMPLES[name] ?? {} };
   }
   for (const name of Object.keys(RECORDS_SAMPLES)) {

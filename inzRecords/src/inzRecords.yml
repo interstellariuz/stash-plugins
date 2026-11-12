@@ -7,12 +7,8 @@ exec:
   - python3
   - "{pluginDir}/inzRecords.py"
 
-# records.js and queries.js declare the InzRecords namespace inzRecords.js uses,
-# so they load first.
 ui:
   javascript:
-    - records.js
-    - queries.js
     - inzRecords.js
   css:
     - inzRecords.css

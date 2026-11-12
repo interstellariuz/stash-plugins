@@ -14,1252 +14,1072 @@
  *     the Generated Content section above it.
  */
 
-type PatchFn = (target: string, fn: (...args: any[]) => any) => void;
-type Component = React.FC<any>;
+import { PluginApi, React, StashService, Bootstrap, useIntl } from "../../shared/stash";
+import { signal } from "../../shared/signal";
+import { makeText } from "../../shared/text";
+import { insertAfterKey, insertOperation, replaceListMenu, safely, type Operation } from "../../shared/tree";
 
-// Only the shapes this file touches. react-bootstrap and react-intl are not
-// dependencies of this repository -- the plugin borrows the copies Stash
-// already loaded -- so there are no types to import.
-interface IPluginApi {
-  React: typeof React;
-  GQL: Record<string, any>;
-  libraries: {
-    Apollo: { gql: (strings: TemplateStringsArray, ...values: unknown[]) => unknown };
-    Bootstrap: {
-      Button: Component;
-      Card: Component;
-      Col: Component;
-      Dropdown: Component & { Item: Component };
-      Form: Component & {
-        Control: Component;
-        Group: Component;
-        Label: Component;
-        Text: Component;
-      };
-      Modal: Component & {
-        Header: Component;
-        Title: Component;
-        Body: Component;
-        Footer: Component;
-      };
-      Row: Component;
-    };
-    FontAwesomeSolid: { faMinus: unknown; faPlus: unknown };
-    Intl: {
-      useIntl: () => {
-        // The whole catalogue, which is how a string can be looked up without
-        // asking formatMessage for an id the server may not have.
-        messages: Record<string, unknown>;
-        formatMessage: (
-          descriptor: { id: string },
-          values?: Record<string, unknown>
-        ) => string;
-      };
-    };
-  };
-  components: Record<string, Component>;
-  hooks: {
-    useToast: () => { success: (m: string) => void; error: (e: unknown) => void };
-    useLoadComponents: (toLoad: (() => Promise<unknown>)[]) => boolean;
-  };
-  loadableComponents: { Settings: () => Promise<unknown> };
-  utils: { StashService: Record<string, any> };
-  patch: { before: PatchFn; instead: PatchFn; after: PatchFn };
+const { Button, Card, Col, Dropdown, Form, Modal, Row } = Bootstrap;
+const { faMinus, faPlus } = PluginApi.libraries.FontAwesomeSolid;
+
+const PLUGIN_ID = "inzVrGenerate";
+const TASK_NAME = "Generate";
+
+/* ------------------------------------------------------------------ *
+ * Strings
+ *
+ * Everything this file puts on screen that Stash has no message of its own
+ * for, looked up as shared/text.ts describes. Ids are spelled out in full
+ * rather than built from PLUGIN_ID: the table is then also the documentation
+ * of what a custom-locales.json would have to contain, and TextId makes a typo
+ * in one of them a compile error rather than an id rendered on screen.
+ *
+ * Anything Stash already has a message for -- every button, every switch,
+ * every row of the preview-options modal -- uses that id instead, so this
+ * table stays what is genuinely ours.
+ * ------------------------------------------------------------------ */
+
+const TEXT = {
+  "inzVrGenerate.title": "Generate as VR",
+  "inzVrGenerate.tasks_description":
+    "Generate supporting image, sprite, video, vtt and other files, from one eye of a VR scene.",
+  "inzVrGenerate.currently_generating": "Currently generating",
+  "inzVrGenerate.format.heading": "VR format",
+  "inzVrGenerate.format.description":
+    "Which half of the frame holds one eye. Auto reads it from the filename and leaves a scene alone when the name says nothing; any other choice is applied to every scene in the run. Hover a format to see the filename tokens it is recognised by.",
+  "inzVrGenerate.format.auto": "Auto — from the filename",
+  "inzVrGenerate.format.auto_tokens":
+    "Reads the tokens listed against each format below. A file carrying none of them is left alone.",
+  "inzVrGenerate.format.sbs": "Side-by-side, 180°",
+  "inzVrGenerate.format.sbs_tokens": "LR, SBS, 3DH, 180_SBS, 180x180_3dh",
+  "inzVrGenerate.format.tb": "Over/under, 180°",
+  "inzVrGenerate.format.tb_tokens": "TB, OU, OVERUNDER, TOPBOTTOM, 3DV, 180x180_3dv",
+  "inzVrGenerate.format.sbs360": "Side-by-side, 360°",
+  "inzVrGenerate.format.sbs360_tokens": "360_SBS, 360_LR, 360x180_3dh",
+  "inzVrGenerate.format.tb360": "Over/under, 360°",
+  "inzVrGenerate.format.tb360_tokens": "360_TB, 360_OU, 360x180_3dv",
+  "inzVrGenerate.format.fisheye190": "Fisheye 190°, side-by-side",
+  "inzVrGenerate.format.fisheye190_tokens": "FISHEYE190, RF52",
+  "inzVrGenerate.format.fisheye200": "Fisheye 200°, side-by-side",
+  "inzVrGenerate.format.fisheye200_tokens": "MKX200",
+  "inzVrGenerate.format.fisheye220": "Fisheye 220°, side-by-side",
+  "inzVrGenerate.format.fisheye220_tokens": "MKX220, VRCA220",
+  "inzVrGenerate.format.mono": "Mono — 180° or 360°, no stereo pair",
+  "inzVrGenerate.format.mono_tokens": "MONO, 180_MONO, 360_MONO",
+};
+
+type TextId = keyof typeof TEXT;
+
+const { useText, Text } = makeText(TEXT);
+
+/**
+ * The name our jobs go into the queue under.
+ *
+ * The untranslated default rather than the displayed title, deliberately:
+ * useVrJobRunning recognises one of our jobs by finding this in the job's
+ * description, which is written once when the job is queued and read back
+ * later -- from another tab, after a reload, possibly in another language.
+ */
+const JOB_MARKER = TEXT["inzVrGenerate.title"];
+
+/* ------------------------------------------------------------------ *
+ * VR formats -- the mirror of the table in vrformat.py
+ * ------------------------------------------------------------------ */
+
+interface IFormat {
+  value: string;
+  label: TextId;
+  tokens: TextId;
 }
 
-(function () {
-  const PluginApi = (window as any).PluginApi as IPluginApi;
-  const React = PluginApi.React;
-  const { Button, Card, Col, Dropdown, Form, Modal, Row } = PluginApi.libraries.Bootstrap;
-  const { faMinus, faPlus } = PluginApi.libraries.FontAwesomeSolid;
-  const { useIntl } = PluginApi.libraries.Intl;
-  const StashService = PluginApi.utils.StashService;
+// `tokens` becomes the option's title attribute, which is the only place a
+// person can find out what `auto` actually looks for.
+const FORMATS: IFormat[] = [
+  { value: "auto", label: "inzVrGenerate.format.auto", tokens: "inzVrGenerate.format.auto_tokens" },
+  { value: "sbs", label: "inzVrGenerate.format.sbs", tokens: "inzVrGenerate.format.sbs_tokens" },
+  { value: "tb", label: "inzVrGenerate.format.tb", tokens: "inzVrGenerate.format.tb_tokens" },
+  { value: "sbs360", label: "inzVrGenerate.format.sbs360", tokens: "inzVrGenerate.format.sbs360_tokens" },
+  { value: "tb360", label: "inzVrGenerate.format.tb360", tokens: "inzVrGenerate.format.tb360_tokens" },
+  { value: "fisheye190", label: "inzVrGenerate.format.fisheye190", tokens: "inzVrGenerate.format.fisheye190_tokens" },
+  { value: "fisheye200", label: "inzVrGenerate.format.fisheye200", tokens: "inzVrGenerate.format.fisheye200_tokens" },
+  { value: "fisheye220", label: "inzVrGenerate.format.fisheye220", tokens: "inzVrGenerate.format.fisheye220_tokens" },
+  { value: "mono", label: "inzVrGenerate.format.mono", tokens: "inzVrGenerate.format.mono_tokens" },
+];
 
-  const PLUGIN_ID = "inzVrGenerate";
-  const TASK_NAME = "Generate";
+/* ------------------------------------------------------------------ *
+ * Options and the task call
+ * ------------------------------------------------------------------ */
 
-  /* ------------------------------------------------------------------ *
-   * Strings
-   *
-   * Everything this file puts on screen that Stash has no message of its own
-   * for. English is the only language it ships in, as everywhere else here, but
-   * the strings go through the same catalogue Stash's do: an id the server
-   * knows wins over the default below, so a custom-locales.json can translate
-   * or reword any of them without touching the plugin. Ids are namespaced under
-   * the plugin id, which no Stash message uses, and spelled out in full rather
-   * than built from PLUGIN_ID: the table is then also the documentation of what
-   * such a locales file would have to contain, and TextId makes a typo in one
-   * of them a compile error rather than an id rendered on screen.
-   *
-   * Looked up through intl.messages rather than handed to formatMessage as a
-   * defaultMessage, because formatMessage for an id the catalogue does not have
-   * renders the id itself and logs a missing-translation error every render.
-   *
-   * Anything Stash already has a message for -- every button, every switch,
-   * every row of the preview-options modal -- uses that id instead, so this
-   * table stays what is genuinely ours.
-   * ------------------------------------------------------------------ */
+interface IPreviewOptions {
+  previewSegments?: number;
+  previewSegmentDuration?: number;
+  previewExcludeStart?: string;
+  previewExcludeEnd?: string;
+}
 
-  const TEXT = {
-    "inzVrGenerate.title": "Generate as VR",
-    "inzVrGenerate.tasks_description":
-      "Generate supporting image, sprite, video, vtt and other files, from one eye of a VR scene.",
-    "inzVrGenerate.currently_generating": "Currently generating",
-    "inzVrGenerate.format.heading": "VR format",
-    "inzVrGenerate.format.description":
-      "Which half of the frame holds one eye. Auto reads it from the filename and leaves a scene alone when the name says nothing; any other choice is applied to every scene in the run. Hover a format to see the filename tokens it is recognised by.",
-    "inzVrGenerate.format.auto": "Auto — from the filename",
-    "inzVrGenerate.format.auto_tokens":
-      "Reads the tokens listed against each format below. A file carrying none of them is left alone.",
-    "inzVrGenerate.format.sbs": "Side-by-side, 180°",
-    "inzVrGenerate.format.sbs_tokens": "LR, SBS, 3DH, 180_SBS, 180x180_3dh",
-    "inzVrGenerate.format.tb": "Over/under, 180°",
-    "inzVrGenerate.format.tb_tokens": "TB, OU, OVERUNDER, TOPBOTTOM, 3DV, 180x180_3dv",
-    "inzVrGenerate.format.sbs360": "Side-by-side, 360°",
-    "inzVrGenerate.format.sbs360_tokens": "360_SBS, 360_LR, 360x180_3dh",
-    "inzVrGenerate.format.tb360": "Over/under, 360°",
-    "inzVrGenerate.format.tb360_tokens": "360_TB, 360_OU, 360x180_3dv",
-    "inzVrGenerate.format.fisheye190": "Fisheye 190°, side-by-side",
-    "inzVrGenerate.format.fisheye190_tokens": "FISHEYE190, RF52",
-    "inzVrGenerate.format.fisheye200": "Fisheye 200°, side-by-side",
-    "inzVrGenerate.format.fisheye200_tokens": "MKX200",
-    "inzVrGenerate.format.fisheye220": "Fisheye 220°, side-by-side",
-    "inzVrGenerate.format.fisheye220_tokens": "MKX220, VRCA220",
-    "inzVrGenerate.format.mono": "Mono — 180° or 360°, no stereo pair",
-    "inzVrGenerate.format.mono_tokens": "MONO, 180_MONO, 360_MONO",
+interface IOptions {
+  covers: boolean;
+  previews: boolean;
+  imagePreviews: boolean;
+  sprites: boolean;
+  overwrite: boolean;
+  format: string;
+  previewOptions?: IPreviewOptions;
+}
+
+/**
+ * What a first run should be.
+ *
+ * The hover preview and the scrubber are what a squashed VR frame ruins most
+ * visibly, and they are what a bulk run is usually for. `sbs` rather than
+ * `auto` because auto leaves a scene alone when its filename names no format,
+ * so an auto run over a plainly-named library is a silent no-op.
+ *
+ * Only the starting point: whatever someone last chose is remembered.
+ */
+function defaultOptions(): IOptions {
+  return {
+    covers: false,
+    previews: true,
+    imagePreviews: false,
+    sprites: true,
+    overwrite: false,
+    format: "sbs",
   };
+}
 
-  type TextId = keyof typeof TEXT;
+// imagePreviews is deliberately not counted: it is a sub-setting of previews
+// and, as in Stash, does nothing on its own.
+function nothingSelected(options: IOptions) {
+  return !options.covers && !options.previews && !options.sprites;
+}
 
-  function useText(): (id: TextId) => string {
-    const intl = useIntl();
-    // A shape without `messages` -- an older or newer react-intl than expected
-    // -- is not an error here: it only means nothing can override a default.
-    return React.useCallback(
-      (id: TextId) => (intl.messages?.[id] ? intl.formatMessage({ id }) : TEXT[id]),
-      [intl]
-    );
-  }
+/* ------------------------------------------------------------------ *
+ * Where the options live
+ *
+ * Stash keeps its own Generate switches in the server's UI config, under
+ * ui.taskDefaults, and this does the same one key over. Both surfaces read
+ * and write it, so the tasks page and the dialog always agree.
+ * ------------------------------------------------------------------ */
 
-  /** One of those strings as an element, for the one caller that is not a component. */
-  const Text: React.FC<{ id: TextId }> = ({ id }) => {
-    const text = useText();
-    return <>{text(id)}</>;
+const STORE_KEY = "inzVrGenerate";
+
+// Whatever was last touched on this page, before it has been read back. The
+// effective value is this or the server's, which is why there is no hydration
+// step and no frame showing the defaults.
+let edited: IOptions | undefined;
+const optionsChanged = signal();
+let writeTimer: ReturnType<typeof setTimeout> | undefined;
+
+// The six fields both surfaces share. previewOptions is left out on purpose:
+// it overrides one run, and only a run started from a selection can set it.
+function toStored(o: IOptions) {
+  const { covers, previews, imagePreviews, sprites, overwrite, format } = o;
+  return { covers, previews, imagePreviews, sprites, overwrite, format };
+}
+
+// Anything missing, of the wrong type, or naming a format this build no
+// longer has falls back to the default, so a value written by an older
+// version cannot break either surface.
+function fromStored(stored: unknown): IOptions {
+  const defaults = defaultOptions();
+  const s = (stored ?? {}) as Record<string, unknown>;
+  const flag = (key: keyof IOptions) =>
+    typeof s[key] === "boolean" ? (s[key] as boolean) : (defaults[key] as boolean);
+  return {
+    covers: flag("covers"),
+    previews: flag("previews"),
+    imagePreviews: flag("imagePreviews"),
+    sprites: flag("sprites"),
+    overwrite: flag("overwrite"),
+    format: FORMATS.some((f) => f.value === s.format) ? (s.format as string) : defaults.format,
   };
+}
 
-  /**
-   * The name our jobs go into the queue under.
-   *
-   * The untranslated default rather than the displayed title, deliberately:
-   * useVrJobRunning recognises one of our jobs by finding this in the job's
-   * description, which is written once when the job is queued and read back
-   * later -- from another tab, after a reload, possibly in another language.
-   */
-  const JOB_MARKER = TEXT["inzVrGenerate.title"];
-
-  /* ------------------------------------------------------------------ *
-   * VR formats -- the mirror of the table in vrformat.py
-   * ------------------------------------------------------------------ */
-
-  interface IFormat {
-    value: string;
-    label: TextId;
-    tokens: TextId;
-  }
-
-  // `tokens` becomes the option's title attribute, which is the only place a
-  // person can find out what `auto` actually looks for.
-  const FORMATS: IFormat[] = [
-    { value: "auto", label: "inzVrGenerate.format.auto", tokens: "inzVrGenerate.format.auto_tokens" },
-    { value: "sbs", label: "inzVrGenerate.format.sbs", tokens: "inzVrGenerate.format.sbs_tokens" },
-    { value: "tb", label: "inzVrGenerate.format.tb", tokens: "inzVrGenerate.format.tb_tokens" },
-    { value: "sbs360", label: "inzVrGenerate.format.sbs360", tokens: "inzVrGenerate.format.sbs360_tokens" },
-    { value: "tb360", label: "inzVrGenerate.format.tb360", tokens: "inzVrGenerate.format.tb360_tokens" },
-    { value: "fisheye190", label: "inzVrGenerate.format.fisheye190", tokens: "inzVrGenerate.format.fisheye190_tokens" },
-    { value: "fisheye200", label: "inzVrGenerate.format.fisheye200", tokens: "inzVrGenerate.format.fisheye200_tokens" },
-    { value: "fisheye220", label: "inzVrGenerate.format.fisheye220", tokens: "inzVrGenerate.format.fisheye220_tokens" },
-    { value: "mono", label: "inzVrGenerate.format.mono", tokens: "inzVrGenerate.format.mono_tokens" },
-  ];
-
-  /* ------------------------------------------------------------------ *
-   * Options and the task call
-   * ------------------------------------------------------------------ */
-
-  interface IPreviewOptions {
-    previewSegments?: number;
-    previewSegmentDuration?: number;
-    previewExcludeStart?: string;
-    previewExcludeEnd?: string;
-  }
-
-  interface IOptions {
-    covers: boolean;
-    previews: boolean;
-    imagePreviews: boolean;
-    sprites: boolean;
-    overwrite: boolean;
-    format: string;
-    previewOptions?: IPreviewOptions;
-  }
-
-  /**
-   * What a first run should be.
-   *
-   * The hover preview and the scrubber are what a squashed VR frame ruins most
-   * visibly, and they are what a bulk run is usually for. `sbs` rather than
-   * `auto` because auto leaves a scene alone when its filename names no format,
-   * so an auto run over a plainly-named library is a silent no-op.
-   *
-   * Only the starting point: whatever someone last chose is remembered.
-   */
-  function defaultOptions(): IOptions {
-    return {
-      covers: false,
-      previews: true,
-      imagePreviews: false,
-      sprites: true,
-      overwrite: false,
-      format: "sbs",
-    };
-  }
-
-  // imagePreviews is deliberately not counted: it is a sub-setting of previews
-  // and, as in Stash, does nothing on its own.
-  function nothingSelected(options: IOptions) {
-    return !options.covers && !options.previews && !options.sprites;
-  }
-
-  /* ------------------------------------------------------------------ *
-   * Where the options live
-   *
-   * Stash keeps its own Generate switches in the server's UI config, under
-   * ui.taskDefaults, and this does the same one key over. Both surfaces read
-   * and write it, so the tasks page and the dialog always agree.
-   * ------------------------------------------------------------------ */
-
-  const STORE_KEY = "inzVrGenerate";
-
-  // Whatever was last touched on this page, before it has been read back. The
-  // effective value is this or the server's, which is why there is no hydration
-  // step and no frame showing the defaults.
-  let edited: IOptions | undefined;
-  const subscribers = new Set<() => void>();
-  let writeTimer: ReturnType<typeof setTimeout> | undefined;
-
-  // The six fields both surfaces share. previewOptions is left out on purpose:
-  // it overrides one run, and only a run started from a selection can set it.
-  function toStored(o: IOptions) {
-    const { covers, previews, imagePreviews, sprites, overwrite, format } = o;
-    return { covers, previews, imagePreviews, sprites, overwrite, format };
-  }
-
-  // Anything missing, of the wrong type, or naming a format this build no
-  // longer has falls back to the default, so a value written by an older
-  // version cannot break either surface.
-  function fromStored(stored: unknown): IOptions {
-    const defaults = defaultOptions();
-    const s = (stored ?? {}) as Record<string, unknown>;
-    const flag = (key: keyof IOptions) =>
-      typeof s[key] === "boolean" ? (s[key] as boolean) : (defaults[key] as boolean);
-    return {
-      covers: flag("covers"),
-      previews: flag("previews"),
-      imagePreviews: flag("imagePreviews"),
-      sprites: flag("sprites"),
-      overwrite: flag("overwrite"),
-      format: FORMATS.some((f) => f.value === s.format) ? (s.format as string) : defaults.format,
-    };
-  }
-
-  /**
-   * Save, eventually.
-   *
-   * configureUISetting rather than configureUI: its resolver reads the server's
-   * own ui map, replaces one key and writes the whole thing back, so it cannot
-   * drop Stash's keys the way sending a client-side copy of the map could.
-   *
-   * Debounced like Stash's own UI-config writes, because each one rewrites
-   * config.yml and flipping six switches must not be six of those.
-   *
-   * The cache write is not optional. Stash's own full-map writers -- front page
-   * content, table columns, pinned filters -- all spread configuration.ui
-   * straight out of the Apollo cache, so a stale cache would quietly drop this
-   * key the next time any of them ran. Done through the raw client rather than
-   * the mutation hook because the timer can outlive the dialog that set it.
-   */
-  function persist(options: IOptions) {
-    if (writeTimer) clearTimeout(writeTimer);
-    writeTimer = setTimeout(() => {
-      StashService.getClient()
-        .mutate({
-          mutation: PluginApi.GQL.ConfigureUiSettingDocument,
-          variables: { key: STORE_KEY, value: toStored(options) },
-          update: (cache: any, result: any) => {
-            const ui = result?.data?.configureUISetting;
-            const query = PluginApi.GQL.ConfigurationDocument;
-            const existing = ui ? cache.readQuery({ query }) : null;
-            if (!existing) return;
-            cache.writeQuery({
-              query,
-              data: { configuration: { ...existing.configuration, ui } },
-            });
-          },
-        })
-        .catch(() => {
-          // A preference that failed to save is not worth interrupting anyone.
-        });
-    }, 500);
-  }
-
-  function useVrOptions(): [IOptions, (v: IOptions) => void] {
-    const [, force] = React.useReducer((n: number) => n + 1, 0);
-    const { data } = StashService.useConfiguration();
-
-    React.useEffect(() => {
-      subscribers.add(force);
-      return () => {
-        subscribers.delete(force);
-      };
-    }, []);
-
-    return [
-      edited ?? fromStored(data?.configuration?.ui?.[STORE_KEY]),
-      (v: IOptions) => {
-        edited = v;
-        subscribers.forEach((fn) => fn());
-        persist(v);
-      },
-    ];
-  }
-
-  /**
-   * Stash's own document, plus the description it leaves out.
-   *
-   * A description is the only thing a plugin gets to put in the job queue row --
-   * subtask lines are written by the job runner and are unreachable from here --
-   * and the shipped RunPluginTask document declares no variable for it. Named
-   * apart from Stash's operation so the two are told apart in devtools.
-   *
-   * Built defensively: this runs while the plugin is loading, and a Stash that
-   * stopped handing out Apollo would otherwise take the menus and the tasks
-   * block down with it over a line of job-queue text.
-   */
-  const RUN_PLUGIN_TASK = safely<unknown>(
-    () => PluginApi.libraries.Apollo.gql`
-      mutation InzRunPluginTask(
-        $plugin_id: ID!
-        $task_name: String!
-        $description: String!
-        $args_map: Map
-      ) {
-        runPluginTask(
-          plugin_id: $plugin_id
-          task_name: $task_name
-          description: $description
-          args_map: $args_map
-        )
-      }
-    `,
-    undefined
-  );
-
-  /**
-   * What the job queue will say. Fixed when the job is queued, so it can only
-   * carry what was known then -- a folder run does not yet know its scene count.
-   *
-   * Stash prefixes it with "Running plugin task: ", and doubles as the marker
-   * the run readout uses to recognise one of ours -- which is why it is built
-   * from JOB_MARKER and plain English rather than from the string table: it is
-   * written to the server once and read back by whoever is watching, so it
-   * cannot depend on the language of the tab that queued it.
-   */
-  function describeRun(target: { sceneIds?: string[]; paths?: string[] }) {
-    const scenes = target.sceneIds?.length ?? 0;
-    if (scenes) {
-      return `${JOB_MARKER} for ${scenes} ${scenes === 1 ? "scene" : "scenes"}`;
-    }
-    const paths = target.paths ?? [];
-    if (paths.length === 1) return `${JOB_MARKER} for ${paths[0]}`;
-    if (paths.length) return `${JOB_MARKER} for ${paths.length} folders`;
-    return `${JOB_MARKER} for the whole library`;
-  }
-
-  /**
-   * Queue the task.
-   *
-   * Not StashService.mutateRunPluginTask: its document declares $args_map but it
-   * passes the variable as `args`, so the arguments are dropped on the floor and
-   * the task would run with its defaultArgs only. Going through the app's own
-   * Apollo client keeps its authentication and error handling.
-   */
-  function runTask(options: IOptions, target: { sceneIds?: string[]; paths?: string[] }) {
-    const args: Record<string, unknown> = {
-      // Sent even when false: defaultArgs fill in whatever the caller omits, so
-      // an unticked switch has to say so rather than simply not be there.
-      covers: options.covers,
-      previews: options.previews,
-      imagePreviews: options.imagePreviews,
-      sprites: options.sprites,
-      overwrite: options.overwrite,
-      format: options.format,
-      ...(options.previews ? options.previewOptions ?? {} : {}),
-    };
-    if (target.sceneIds?.length) args.sceneIds = target.sceneIds;
-    if (target.paths?.length) args.paths = target.paths;
-
-    const variables: Record<string, unknown> = {
-      plugin_id: PLUGIN_ID,
-      task_name: TASK_NAME,
-      args_map: args,
-    };
-    // Only with our own document: Stash's declares no such variable.
-    if (RUN_PLUGIN_TASK) variables.description = describeRun(target);
-
-    return StashService.getClient().mutate({
-      mutation: RUN_PLUGIN_TASK ?? PluginApi.GQL.RunPluginTaskDocument,
-      variables,
-    });
-  }
-
-  function useQueueTask() {
-    const intl = useIntl();
-    const Toast = PluginApi.hooks.useToast();
-
-    return React.useCallback(
-      async (options: IOptions, target: { sceneIds?: string[]; paths?: string[] }) => {
-        try {
-          await runTask(options, target);
-          Toast.success(
-            intl.formatMessage(
-              { id: "config.tasks.added_job_to_queue" },
-              { operation_name: intl.formatMessage({ id: "actions.generate" }) }
-            )
-          );
-        } catch (e) {
-          Toast.error(e);
-        }
-      },
-      [intl, Toast]
-    );
-  }
-
-  /* ------------------------------------------------------------------ *
-   * The option rows, shared by the dialog and the tasks page
-   * ------------------------------------------------------------------ */
-
-  const FormatSetting: React.FC<{ value: string; onChange: (v: string) => void }> = ({
-    value,
-    onChange,
-  }) => {
-    const text = useText();
-    const { Setting } = PluginApi.components;
-    return (
-      <Setting
-        id="vr-format"
-        heading={text("inzVrGenerate.format.heading")}
-        subHeading={text("inzVrGenerate.format.description")}
-      >
-        <Form.Control
-          className="input-control"
-          as="select"
-          value={value}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChange(e.currentTarget.value)}
-        >
-          {FORMATS.map((f) => (
-            <option key={f.value} value={f.value} title={text(f.tokens)}>
-              {text(f.label)}
-            </option>
-          ))}
-        </Form.Control>
-      </Setting>
-    );
-  };
-
-  /**
-   * "Override preview generation options", rebuilt.
-   *
-   * Stash does this with ModalSetting, which needs a settings context that
-   * plugins have no way to provide, and with VideoPreviewInput, which is not
-   * exposed either. Both are small enough to just write.
-   */
-  const PreviewOptionsSetting: React.FC<{
-    value?: IPreviewOptions;
-    disabled?: boolean;
-    onChange: (v: IPreviewOptions) => void;
-  }> = ({ value, disabled, onChange }) => {
-    const intl = useIntl();
-    const { Setting } = PluginApi.components;
-    const [draft, setDraft] = React.useState<IPreviewOptions | undefined>(undefined);
-
-    function field(
-      id: string,
-      headingID: string,
-      descriptionID: string,
-      control: JSX.Element
-    ) {
-      return (
-        <Form.Group id={id}>
-          <h6>{intl.formatMessage({ id: headingID })}</h6>
-          {control}
-          <Form.Text className="text-muted">
-            {intl.formatMessage({ id: descriptionID })}
-          </Form.Text>
-        </Form.Group>
-      );
-    }
-
-    function set(v: Partial<IPreviewOptions>) {
-      setDraft({ ...(draft ?? {}), ...v });
-    }
-
-    const heading = intl.formatMessage({
-      id: "dialogs.scene_gen.override_preview_generation_options",
-    });
-
-    return (
-      <>
-        <Setting
-          id="vr-preview-options"
-          className="sub-setting"
-          disabled={disabled}
-          heading={heading}
-          subHeading={intl.formatMessage({
-            id: "dialogs.scene_gen.override_preview_generation_options_desc",
-          })}
-        >
-          <Button disabled={disabled} onClick={() => setDraft(value ?? {})}>
-            {intl.formatMessage({ id: "actions.edit" })}
-          </Button>
-        </Setting>
-
-        {draft !== undefined ? (
-          <Modal show onHide={() => setDraft(undefined)}>
-            <Modal.Header closeButton>
-              <Modal.Title>{heading}</Modal.Title>
-            </Modal.Header>
-            <Modal.Body>
-              {field(
-                "vr-preview-segments",
-                "dialogs.scene_gen.preview_seg_count_head",
-                "dialogs.scene_gen.preview_seg_count_desc",
-                <Form.Control
-                  className="text-input"
-                  type="number"
-                  min={1}
-                  value={draft.previewSegments ?? ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    set({ previewSegments: Number.parseInt(e.currentTarget.value || "1", 10) })
-                  }
-                />
-              )}
-              {field(
-                "vr-preview-segment-duration",
-                "dialogs.scene_gen.preview_seg_duration_head",
-                "dialogs.scene_gen.preview_seg_duration_desc",
-                <Form.Control
-                  className="text-input"
-                  type="number"
-                  value={draft.previewSegmentDuration ?? ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    set({
-                      previewSegmentDuration: Number.parseFloat(e.currentTarget.value || "0"),
-                    })
-                  }
-                />
-              )}
-              {field(
-                "vr-preview-exclude-start",
-                "dialogs.scene_gen.preview_exclude_start_time_head",
-                "dialogs.scene_gen.preview_exclude_start_time_desc",
-                <Form.Control
-                  className="text-input"
-                  value={draft.previewExcludeStart ?? ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    set({ previewExcludeStart: e.currentTarget.value })
-                  }
-                />
-              )}
-              {field(
-                "vr-preview-exclude-end",
-                "dialogs.scene_gen.preview_exclude_end_time_head",
-                "dialogs.scene_gen.preview_exclude_end_time_desc",
-                <Form.Control
-                  className="text-input"
-                  value={draft.previewExcludeEnd ?? ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    set({ previewExcludeEnd: e.currentTarget.value })
-                  }
-                />
-              )}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="secondary" onClick={() => setDraft(undefined)}>
-                {intl.formatMessage({ id: "actions.cancel" })}
-              </Button>
-              <Button
-                onClick={() => {
-                  onChange(draft);
-                  setDraft(undefined);
-                }}
-              >
-                {intl.formatMessage({ id: "actions.confirm" })}
-              </Button>
-            </Modal.Footer>
-          </Modal>
-        ) : null}
-      </>
-    );
-  };
-
-  const VrGenerateOptions: React.FC<{
-    options: IOptions;
-    setOptions: (v: IOptions) => void;
-    /**
-     * Preview overrides are only offered for a selection, as in Stash, and are
-     * held by whoever renders that -- they describe one run, so remembering
-     * them would apply an override typed here to a later library-wide run whose
-     * dialog does not even show the row.
-     */
-    selection?: boolean;
-    previewOptions?: IPreviewOptions;
-    setPreviewOptions?: (v: IPreviewOptions) => void;
-  }> = ({ options, setOptions, selection, previewOptions, setPreviewOptions }) => {
-    const { BooleanSetting } = PluginApi.components;
-
-    function set(input: Partial<IOptions>) {
-      setOptions({ ...options, ...input });
-    }
-
-    return (
-      <>
-        <BooleanSetting
-          id="vr-covers-task"
-          headingID="dialogs.scene_gen.covers"
-          checked={options.covers}
-          onChange={(v: boolean) => set({ covers: v })}
-        />
-        <BooleanSetting
-          id="vr-preview-task"
-          headingID="dialogs.scene_gen.video_previews"
-          tooltipID="dialogs.scene_gen.video_previews_tooltip"
-          checked={options.previews}
-          onChange={(v: boolean) => set({ previews: v })}
-        />
-        <BooleanSetting
-          id="vr-image-preview-task"
-          className="sub-setting"
-          disabled={!options.previews}
-          headingID="dialogs.scene_gen.image_previews"
-          tooltipID="dialogs.scene_gen.image_previews_tooltip"
-          checked={options.imagePreviews}
-          onChange={(v: boolean) => set({ imagePreviews: v })}
-        />
-        {selection && setPreviewOptions ? (
-          <PreviewOptionsSetting
-            disabled={!options.previews}
-            value={previewOptions}
-            onChange={setPreviewOptions}
-          />
-        ) : null}
-        <BooleanSetting
-          id="vr-sprite-task"
-          headingID="dialogs.scene_gen.sprites"
-          tooltipID="dialogs.scene_gen.sprites_tooltip"
-          checked={options.sprites}
-          onChange={(v: boolean) => set({ sprites: v })}
-        />
-
-        <FormatSetting value={options.format} onChange={(v) => set({ format: v })} />
-
-        <BooleanSetting
-          id="vr-overwrite"
-          headingID="dialogs.scene_gen.overwrite"
-          checked={options.overwrite}
-          onChange={(v: boolean) => set({ overwrite: v })}
-        />
-      </>
-    );
-  };
-
-  /* ------------------------------------------------------------------ *
-   * The dialog behind "Generate as VR…"
-   * ------------------------------------------------------------------ */
-
-  const GenerateVrDialog: React.FC<{ sceneIds: string[]; onClose: () => void }> = ({
-    sceneIds,
-    onClose,
-  }) => {
-    const intl = useIntl();
-    const text = useText();
-    const queue = useQueueTask();
-    const { LoadingIndicator } = PluginApi.components;
-    const [options, setOptions] = useVrOptions();
-    const [previewOptions, setPreviewOptions] = React.useState<IPreviewOptions>();
-    const [running, setRunning] = React.useState(false);
-
-    // Setting and BooleanSetting are registered when Stash's Settings/Inputs
-    // module is evaluated, and nothing on a scene page has pulled that chunk in
-    // -- opening this dialog first thing after a cold load would otherwise
-    // render undefined components. The scene list gets away with it only
-    // because it imports Stash's own Generate dialog statically.
-    const loading = PluginApi.hooks.useLoadComponents([PluginApi.loadableComponents.Settings]);
-
-    async function onGenerate() {
-      setRunning(true);
-      await queue({ ...options, previewOptions }, { sceneIds });
-      setRunning(false);
-      onClose();
-    }
-
-    return (
-      <Modal show size="lg" onHide={onClose}>
-        <Modal.Header closeButton>
-          <Modal.Title>{text("inzVrGenerate.title")}</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form>
-            <Form.Group id="selected-generate-ids">
-              {intl.formatMessage(
-                { id: "config.tasks.generate.generating_scenes" },
-                {
-                  num: sceneIds.length,
-                  scene: intl.formatMessage(
-                    { id: "countables.scenes" },
-                    { count: sceneIds.length }
-                  ),
-                }
-              )}
-              .
-            </Form.Group>
-            {/*
-              Stash's SettingSection, hand-written: it is not exposed to plugins
-              and needs a settings context besides. Without the wrapper none of
-              the row styling applies -- every rule in the settings stylesheet is
-              nested inside .setting-section, down to the one that takes the
-              padding off the card. The empty h1 is Stash's too; it renders one
-              whether or not there is a heading, and the spacing assumes it.
-            */}
-            <div className="setting-section">
-              <h1 />
-              <Card>
-                {loading ? (
-                  <LoadingIndicator />
-                ) : (
-                  <VrGenerateOptions
-                    options={options}
-                    setOptions={setOptions}
-                    selection
-                    previewOptions={previewOptions}
-                    setPreviewOptions={setPreviewOptions}
-                  />
-                )}
-              </Card>
-            </div>
-          </Form>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={onClose}>
-            {intl.formatMessage({ id: "actions.cancel" })}
-          </Button>
-          <Button onClick={onGenerate} disabled={running || loading || nothingSelected(options)}>
-            {intl.formatMessage({ id: "actions.generate" })}
-          </Button>
-        </Modal.Footer>
-      </Modal>
-    );
-  };
-
-  /* ------------------------------------------------------------------ *
-   * Walking a rendered tree
-   *
-   * Neither … menu is a patchable component, but both are built by an ancestor
-   * that is, and appear in the element tree it returns before anything renders
-   * them. So: find one element in that tree and swap it for a wrapped copy.
-   * Both walks run on every render of a large component, so they stay shallow,
-   * stop at the first hit, and never throw -- a patch that throws takes the
-   * page with it.
-   * ------------------------------------------------------------------ */
-
-  const MAX_DEPTH = 24;
-
-  function replaceElement(
-    node: any,
-    match: (el: any) => any | null,
-    depth = 0
-  ): { node: any; found: boolean } {
-    if (depth > MAX_DEPTH || node === null || node === undefined || typeof node !== "object") {
-      return { node, found: false };
-    }
-
-    if (Array.isArray(node)) {
-      let found = false;
-      const next = node.map((child) => {
-        if (found) return child;
-        const result = replaceElement(child, match, depth + 1);
-        found = found || result.found;
-        return result.node;
-      });
-      return found ? { node: next, found } : { node, found: false };
-    }
-
-    if (!React.isValidElement(node)) return { node, found: false };
-
-    const replacement = match(node);
-    if (replacement) return { node: replacement, found: true };
-
-    const children = (node as any).props?.children;
-    const result = replaceElement(children, match, depth + 1);
-    if (!result.found) return { node, found: false };
-    return {
-      node: React.cloneElement(node as any, undefined, result.node),
-      found: true,
-    };
-  }
-
-  function safely<T>(fn: () => T, fallback: T): T {
-    try {
-      return fn();
-    } catch {
-      return fallback;
-    }
-  }
-
-  /* ------------------------------------------------------------------ *
-   * Scene list: "Generate as VR…" under "Generate…"
-   * ------------------------------------------------------------------ */
-
-  interface IOperation {
-    text: string;
-    onClick: () => void;
-    isDisplayed?: () => boolean;
-    icon?: unknown;
-  }
-
-  /**
-   * Wraps the ListOperations element with one extra menu entry.
-   *
-   * A component rather than a plain clone because finding Stash's own
-   * "Generate…" entry means formatting the same message it did, which needs
-   * useIntl, and because the dialog has to live somewhere that outlives the
-   * dropdown closing.
-   */
-  const SceneListOperations: React.FC<{ element: any; selectedIds: Set<string> }> = ({
-    element,
-    selectedIds,
-  }) => {
-    const intl = useIntl();
-    const text = useText();
-    const [showing, setShowing] = React.useState(false);
-
-    const ids = React.useMemo(() => Array.from(selectedIds ?? []), [selectedIds]);
-
-    const operations = React.useMemo(() => {
-      const existing: IOperation[] = element.props?.operations ?? [];
-      const entry: IOperation = {
-        // Worded like Stash's own entry: the title, then an ellipsis.
-        text: `${text("inzVrGenerate.title")}…`,
-        onClick: () => setShowing(true),
-        isDisplayed: () => ids.length > 0,
-      };
-
-      // Stash builds its entry as `${actions.generate}…`; matching that puts
-      // ours directly underneath rather than at the bottom of the menu.
-      const generate = `${intl.formatMessage({ id: "actions.generate" })}…`;
-      const at = existing.findIndex((o) => o.text === generate);
-      const next = existing.slice();
-      next.splice(at < 0 ? next.length : at + 1, 0, entry);
-      return next;
-    }, [element, ids, intl, text]);
-
-    return (
-      <>
-        {React.cloneElement(element, { operations })}
-        {showing ? (
-          <GenerateVrDialog sceneIds={ids} onClose={() => setShowing(false)} />
-        ) : null}
-      </>
-    );
-  };
-
-  const SceneListWrapper: React.FC<{ tree: any }> = ({ tree }) =>
-    safely(
-      () =>
-        replaceElement(tree, (el) => {
-          // FilteredListToolbar carries both halves of what is needed: the
-          // selection, and the element that renders the … menu.
-          const props = (el as any).props;
-          if (!props?.listSelect || !React.isValidElement(props.operationComponent)) return null;
-          return React.cloneElement(el as any, {
-            operationComponent: (
-              <SceneListOperations
-                element={props.operationComponent}
-                selectedIds={props.listSelect.selectedIds}
-              />
-            ),
+/**
+ * Save, eventually.
+ *
+ * configureUISetting rather than configureUI: its resolver reads the server's
+ * own ui map, replaces one key and writes the whole thing back, so it cannot
+ * drop Stash's keys the way sending a client-side copy of the map could.
+ *
+ * Debounced like Stash's own UI-config writes, because each one rewrites
+ * config.yml and flipping six switches must not be six of those.
+ *
+ * The cache write is not optional. Stash's own full-map writers -- front page
+ * content, table columns, pinned filters -- all spread configuration.ui
+ * straight out of the Apollo cache, so a stale cache would quietly drop this
+ * key the next time any of them ran. Done through the raw client rather than
+ * the mutation hook because the timer can outlive the dialog that set it.
+ */
+function persist(options: IOptions) {
+  if (writeTimer) clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    StashService.getClient()
+      .mutate({
+        mutation: PluginApi.GQL.ConfigureUiSettingDocument,
+        variables: { key: STORE_KEY, value: toStored(options) },
+        update: (cache: any, result: any) => {
+          const ui = result?.data?.configureUISetting;
+          const query = PluginApi.GQL.ConfigurationDocument;
+          const existing = ui ? cache.readQuery({ query }) : null;
+          if (!existing) return;
+          cache.writeQuery({
+            query,
+            data: { configuration: { ...existing.configuration, ui } },
           });
-        }).node,
-      tree
-    );
+        },
+      })
+      .catch(() => {
+        // A preference that failed to save is not worth interrupting anyone.
+      });
+  }, 500);
+}
 
-  PluginApi.patch.after("FilteredSceneList", (_props: any, _context: any, result: any) =>
-    React.createElement(SceneListWrapper, { tree: result })
-  );
+function useVrOptions(): [IOptions, (v: IOptions) => void] {
+  optionsChanged.use();
+  const { data } = StashService.useConfiguration();
 
-  /* ------------------------------------------------------------------ *
-   * Scene page: the same entry in that scene's … menu
-   * ------------------------------------------------------------------ */
+  return [
+    edited ?? fromStored(data?.configuration?.ui?.[STORE_KEY]),
+    (v: IOptions) => {
+      edited = v;
+      optionsChanged.notify();
+      persist(v);
+    },
+  ];
+}
 
-  const ScenePageWrapper: React.FC<{ tree: any; sceneId: string }> = ({ tree, sceneId }) => {
-    const text = useText();
-    const [showing, setShowing] = React.useState(false);
+/**
+ * Stash's own document, plus the description it leaves out.
+ *
+ * A description is the only thing a plugin gets to put in the job queue row --
+ * subtask lines are written by the job runner and are unreachable from here --
+ * and the shipped RunPluginTask document declares no variable for it. Named
+ * apart from Stash's operation so the two are told apart in devtools.
+ *
+ * Built defensively: this runs while the plugin is loading, and a Stash that
+ * stopped handing out Apollo would otherwise take the menus and the tasks
+ * block down with it over a line of job-queue text.
+ */
+const RUN_PLUGIN_TASK = safely<unknown>(
+  PLUGIN_ID,
+  () => PluginApi.libraries.Apollo.gql`
+    mutation InzRunPluginTask(
+      $plugin_id: ID!
+      $task_name: String!
+      $description: String!
+      $args_map: Map
+    ) {
+      runPluginTask(
+        plugin_id: $plugin_id
+        task_name: $task_name
+        description: $description
+        args_map: $args_map
+      )
+    }
+  `,
+  undefined
+);
 
-    const patched = React.useMemo(
-      () =>
-        safely(
-          () =>
-            replaceElement(tree, (el) => {
-              // The operations Dropdown.Menu, identified by the item Stash
-              // gives the key "generate". Keys survive on elements taken
-              // straight out of props.children.
-              const children = (el as any).props?.children;
-              if (!Array.isArray(children)) return null;
-              const at = children.findIndex(
-                (c: any) => React.isValidElement(c) && (c as any).key === "generate"
-              );
-              if (at < 0) return null;
+/**
+ * What the job queue will say. Fixed when the job is queued, so it can only
+ * carry what was known then -- a folder run does not yet know its scene count.
+ *
+ * Stash prefixes it with "Running plugin task: ", and doubles as the marker
+ * the run readout uses to recognise one of ours -- which is why it is built
+ * from JOB_MARKER and plain English rather than from the string table: it is
+ * written to the server once and read back by whoever is watching, so it
+ * cannot depend on the language of the tab that queued it.
+ */
+function describeRun(target: { sceneIds?: string[]; paths?: string[] }) {
+  const scenes = target.sceneIds?.length ?? 0;
+  if (scenes) {
+    return `${JOB_MARKER} for ${scenes} ${scenes === 1 ? "scene" : "scenes"}`;
+  }
+  const paths = target.paths ?? [];
+  if (paths.length === 1) return `${JOB_MARKER} for ${paths[0]}`;
+  if (paths.length) return `${JOB_MARKER} for ${paths.length} folders`;
+  return `${JOB_MARKER} for the whole library`;
+}
 
-              const item = (
-                <Dropdown.Item
-                  key="inz-vr-generate"
-                  className="bg-secondary text-white"
-                  onClick={() => setShowing(true)}
-                >
-                  {`${text("inzVrGenerate.title")}…`}
-                </Dropdown.Item>
-              );
-              const next = children.slice();
-              next.splice(at + 1, 0, item);
-              return React.cloneElement(el as any, undefined, next);
-            }).node,
-          tree
-        ),
-      [tree, text]
-    );
-
-    return (
-      <>
-        {patched}
-        {showing ? (
-          <GenerateVrDialog sceneIds={[sceneId]} onClose={() => setShowing(false)} />
-        ) : null}
-      </>
-    );
+/**
+ * Queue the task.
+ *
+ * Not StashService.mutateRunPluginTask: its document declares $args_map but it
+ * passes the variable as `args`, so the arguments are dropped on the floor and
+ * the task would run with its defaultArgs only. Going through the app's own
+ * Apollo client keeps its authentication and error handling.
+ */
+function runTask(options: IOptions, target: { sceneIds?: string[]; paths?: string[] }) {
+  const args: Record<string, unknown> = {
+    // Sent even when false: defaultArgs fill in whatever the caller omits, so
+    // an unticked switch has to say so rather than simply not be there.
+    covers: options.covers,
+    previews: options.previews,
+    imagePreviews: options.imagePreviews,
+    sprites: options.sprites,
+    overwrite: options.overwrite,
+    format: options.format,
+    ...(options.previews ? options.previewOptions ?? {} : {}),
   };
+  if (target.sceneIds?.length) args.sceneIds = target.sceneIds;
+  if (target.paths?.length) args.paths = target.paths;
 
-  PluginApi.patch.after("ScenePage", (props: any, _context: any, result: any) => {
-    const sceneId = props?.scene?.id;
-    if (!sceneId) return result;
-    return React.createElement(ScenePageWrapper, { tree: result, sceneId: String(sceneId) });
+  const variables: Record<string, unknown> = {
+    plugin_id: PLUGIN_ID,
+    task_name: TASK_NAME,
+    args_map: args,
+  };
+  // Only with our own document: Stash's declares no such variable.
+  if (RUN_PLUGIN_TASK) variables.description = describeRun(target);
+
+  return StashService.getClient().mutate({
+    mutation: RUN_PLUGIN_TASK ?? PluginApi.GQL.RunPluginTaskDocument,
+    variables,
+  });
+}
+
+function useQueueTask() {
+  const intl = useIntl();
+  const Toast = PluginApi.hooks.useToast();
+
+  return React.useCallback(
+    async (options: IOptions, target: { sceneIds?: string[]; paths?: string[] }) => {
+      try {
+        await runTask(options, target);
+        Toast.success(
+          intl.formatMessage(
+            { id: "config.tasks.added_job_to_queue" },
+            { operation_name: intl.formatMessage({ id: "actions.generate" }) }
+          )
+        );
+      } catch (e) {
+        Toast.error(e);
+      }
+    },
+    [intl, Toast]
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The option rows, shared by the dialog and the tasks page
+ * ------------------------------------------------------------------ */
+
+const FormatSetting: React.FC<{ value: string; onChange: (v: string) => void }> = ({
+  value,
+  onChange,
+}) => {
+  const text = useText();
+  const { Setting } = PluginApi.components;
+  return (
+    <Setting
+      id="vr-format"
+      heading={text("inzVrGenerate.format.heading")}
+      subHeading={text("inzVrGenerate.format.description")}
+    >
+      <Form.Control
+        className="input-control"
+        as="select"
+        value={value}
+        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChange(e.currentTarget.value)}
+      >
+        {FORMATS.map((f) => (
+          <option key={f.value} value={f.value} title={text(f.tokens)}>
+            {text(f.label)}
+          </option>
+        ))}
+      </Form.Control>
+    </Setting>
+  );
+};
+
+/**
+ * "Override preview generation options", rebuilt.
+ *
+ * Stash does this with ModalSetting, which needs a settings context that
+ * plugins have no way to provide, and with VideoPreviewInput, which is not
+ * exposed either. Both are small enough to just write.
+ */
+const PreviewOptionsSetting: React.FC<{
+  value?: IPreviewOptions;
+  disabled?: boolean;
+  onChange: (v: IPreviewOptions) => void;
+}> = ({ value, disabled, onChange }) => {
+  const intl = useIntl();
+  const { Setting } = PluginApi.components;
+  const [draft, setDraft] = React.useState<IPreviewOptions | undefined>(undefined);
+
+  function field(
+    id: string,
+    headingID: string,
+    descriptionID: string,
+    control: JSX.Element
+  ) {
+    return (
+      <Form.Group id={id}>
+        <h6>{intl.formatMessage({ id: headingID })}</h6>
+        {control}
+        <Form.Text className="text-muted">
+          {intl.formatMessage({ id: descriptionID })}
+        </Form.Text>
+      </Form.Group>
+    );
+  }
+
+  function set(v: Partial<IPreviewOptions>) {
+    setDraft({ ...(draft ?? {}), ...v });
+  }
+
+  const heading = intl.formatMessage({
+    id: "dialogs.scene_gen.override_preview_generation_options",
   });
 
-  /* ------------------------------------------------------------------ *
-   * Settings > Tasks > Plugin Tasks
-   *
-   * The block has to read like the Generated Content section above it: two
-   * buttons beside the heading, the switches underneath. SettingGroup takes
-   * those as separate props, so the two halves cannot share component state --
-   * which is what useVrOptions, shared with the dialog, is for.
-   * ------------------------------------------------------------------ */
+  return (
+    <>
+      <Setting
+        id="vr-preview-options"
+        className="sub-setting"
+        disabled={disabled}
+        heading={heading}
+        subHeading={intl.formatMessage({
+          id: "dialogs.scene_gen.override_preview_generation_options_desc",
+        })}
+      >
+        <Button disabled={disabled} onClick={() => setDraft(value ?? {})}>
+          {intl.formatMessage({ id: "actions.edit" })}
+        </Button>
+      </Setting>
 
-  /** Stash's DirectorySelectionDialog, which is not exposed to plugins. */
-  const DirectorySelectionDialog: React.FC<{ onClose: (paths?: string[]) => void }> = ({
-    onClose,
-  }) => {
-    const intl = useIntl();
-    const { FolderSelect, Icon } = PluginApi.components;
-    const { data } = StashService.useConfiguration();
-    const [paths, setPaths] = React.useState<string[]>([]);
-    const [current, setCurrent] = React.useState("");
+      {draft !== undefined ? (
+        <Modal show onHide={() => setDraft(undefined)}>
+          <Modal.Header closeButton>
+            <Modal.Title>{heading}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            {field(
+              "vr-preview-segments",
+              "dialogs.scene_gen.preview_seg_count_head",
+              "dialogs.scene_gen.preview_seg_count_desc",
+              <Form.Control
+                className="text-input"
+                type="number"
+                min={1}
+                value={draft.previewSegments ?? ""}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  set({ previewSegments: Number.parseInt(e.currentTarget.value || "1", 10) })
+                }
+              />
+            )}
+            {field(
+              "vr-preview-segment-duration",
+              "dialogs.scene_gen.preview_seg_duration_head",
+              "dialogs.scene_gen.preview_seg_duration_desc",
+              <Form.Control
+                className="text-input"
+                type="number"
+                value={draft.previewSegmentDuration ?? ""}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  set({
+                    previewSegmentDuration: Number.parseFloat(e.currentTarget.value || "0"),
+                  })
+                }
+              />
+            )}
+            {field(
+              "vr-preview-exclude-start",
+              "dialogs.scene_gen.preview_exclude_start_time_head",
+              "dialogs.scene_gen.preview_exclude_start_time_desc",
+              <Form.Control
+                className="text-input"
+                value={draft.previewExcludeStart ?? ""}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  set({ previewExcludeStart: e.currentTarget.value })
+                }
+              />
+            )}
+            {field(
+              "vr-preview-exclude-end",
+              "dialogs.scene_gen.preview_exclude_end_time_head",
+              "dialogs.scene_gen.preview_exclude_end_time_desc",
+              <Form.Control
+                className="text-input"
+                value={draft.previewExcludeEnd ?? ""}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  set({ previewExcludeEnd: e.currentTarget.value })
+                }
+              />
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setDraft(undefined)}>
+              {intl.formatMessage({ id: "actions.cancel" })}
+            </Button>
+            <Button
+              onClick={() => {
+                onChange(draft);
+                setDraft(undefined);
+              }}
+            >
+              {intl.formatMessage({ id: "actions.confirm" })}
+            </Button>
+          </Modal.Footer>
+        </Modal>
+      ) : null}
+    </>
+  );
+};
 
-    const libraryPaths = (data?.configuration?.general?.stashes ?? []).map(
-      (s: { path: string }) => s.path
-    );
+const VrGenerateOptions: React.FC<{
+  options: IOptions;
+  setOptions: (v: IOptions) => void;
+  /**
+   * Preview overrides are only offered for a selection, as in Stash, and are
+   * held by whoever renders that -- they describe one run, so remembering
+   * them would apply an override typed here to a later library-wide run whose
+   * dialog does not even show the row.
+   */
+  selection?: boolean;
+  previewOptions?: IPreviewOptions;
+  setPreviewOptions?: (v: IPreviewOptions) => void;
+}> = ({ options, setOptions, selection, previewOptions, setPreviewOptions }) => {
+  const { BooleanSetting } = PluginApi.components;
 
-    return (
-      <Modal show onHide={() => onClose()}>
-        <Modal.Header closeButton>
-          <Modal.Title>{intl.formatMessage({ id: "actions.select_folders" })}</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <div className="dialog-container">
-            {paths.map((p) => (
-              <Row className="align-items-center mb-1" key={p}>
-                <Form.Label column xs={10}>
-                  {p}
-                </Form.Label>
-                <Col xs={2} className="d-flex justify-content-end">
-                  <Button
-                    className="ml-auto"
-                    size="sm"
-                    variant="danger"
-                    title={intl.formatMessage({ id: "actions.delete" })}
-                    onClick={() => setPaths(paths.filter((path) => path !== p))}
-                  >
-                    <Icon icon={faMinus} />
-                  </Button>
-                </Col>
-              </Row>
-            ))}
+  function set(input: Partial<IOptions>) {
+    setOptions({ ...options, ...input });
+  }
 
-            <FolderSelect
-              currentDirectory={current}
-              onChangeDirectory={setCurrent}
-              defaultDirectories={libraryPaths}
-              appendButton={
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    if (current && !paths.includes(current)) setPaths(paths.concat(current));
-                  }}
-                >
-                  <Icon icon={faPlus} />
-                </Button>
+  return (
+    <>
+      <BooleanSetting
+        id="vr-covers-task"
+        headingID="dialogs.scene_gen.covers"
+        checked={options.covers}
+        onChange={(v: boolean) => set({ covers: v })}
+      />
+      <BooleanSetting
+        id="vr-preview-task"
+        headingID="dialogs.scene_gen.video_previews"
+        tooltipID="dialogs.scene_gen.video_previews_tooltip"
+        checked={options.previews}
+        onChange={(v: boolean) => set({ previews: v })}
+      />
+      <BooleanSetting
+        id="vr-image-preview-task"
+        className="sub-setting"
+        disabled={!options.previews}
+        headingID="dialogs.scene_gen.image_previews"
+        tooltipID="dialogs.scene_gen.image_previews_tooltip"
+        checked={options.imagePreviews}
+        onChange={(v: boolean) => set({ imagePreviews: v })}
+      />
+      {selection && setPreviewOptions ? (
+        <PreviewOptionsSetting
+          disabled={!options.previews}
+          value={previewOptions}
+          onChange={setPreviewOptions}
+        />
+      ) : null}
+      <BooleanSetting
+        id="vr-sprite-task"
+        headingID="dialogs.scene_gen.sprites"
+        tooltipID="dialogs.scene_gen.sprites_tooltip"
+        checked={options.sprites}
+        onChange={(v: boolean) => set({ sprites: v })}
+      />
+
+      <FormatSetting value={options.format} onChange={(v) => set({ format: v })} />
+
+      <BooleanSetting
+        id="vr-overwrite"
+        headingID="dialogs.scene_gen.overwrite"
+        checked={options.overwrite}
+        onChange={(v: boolean) => set({ overwrite: v })}
+      />
+    </>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ * The dialog behind "Generate as VR…"
+ * ------------------------------------------------------------------ */
+
+const GenerateVrDialog: React.FC<{ sceneIds: string[]; onClose: () => void }> = ({
+  sceneIds,
+  onClose,
+}) => {
+  const intl = useIntl();
+  const text = useText();
+  const queue = useQueueTask();
+  const { LoadingIndicator } = PluginApi.components;
+  const [options, setOptions] = useVrOptions();
+  const [previewOptions, setPreviewOptions] = React.useState<IPreviewOptions>();
+  const [running, setRunning] = React.useState(false);
+
+  // Setting and BooleanSetting are registered when Stash's Settings/Inputs
+  // module is evaluated, and nothing on a scene page has pulled that chunk in
+  // -- opening this dialog first thing after a cold load would otherwise
+  // render undefined components. The scene list gets away with it only
+  // because it imports Stash's own Generate dialog statically.
+  const loading = PluginApi.hooks.useLoadComponents([PluginApi.loadableComponents.Settings]);
+
+  async function onGenerate() {
+    setRunning(true);
+    await queue({ ...options, previewOptions }, { sceneIds });
+    setRunning(false);
+    onClose();
+  }
+
+  return (
+    <Modal show size="lg" onHide={onClose}>
+      <Modal.Header closeButton>
+        <Modal.Title>{text("inzVrGenerate.title")}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <Form>
+          <Form.Group id="selected-generate-ids">
+            {intl.formatMessage(
+              { id: "config.tasks.generate.generating_scenes" },
+              {
+                num: sceneIds.length,
+                scene: intl.formatMessage(
+                  { id: "countables.scenes" },
+                  { count: sceneIds.length }
+                ),
               }
-            />
+            )}
+            .
+          </Form.Group>
+          {/*
+            Stash's SettingSection, hand-written: it is not exposed to plugins
+            and needs a settings context besides. Without the wrapper none of
+            the row styling applies -- every rule in the settings stylesheet is
+            nested inside .setting-section, down to the one that takes the
+            padding off the card. The empty h1 is Stash's too; it renders one
+            whether or not there is a heading, and the spacing assumes it.
+          */}
+          <div className="setting-section">
+            <h1 />
+            <Card>
+              {loading ? (
+                <LoadingIndicator />
+              ) : (
+                <VrGenerateOptions
+                  options={options}
+                  setOptions={setOptions}
+                  selection
+                  previewOptions={previewOptions}
+                  setPreviewOptions={setPreviewOptions}
+                />
+              )}
+            </Card>
           </div>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => onClose()}>
-            {intl.formatMessage({ id: "actions.cancel" })}
-          </Button>
-          <Button disabled={paths.length === 0} onClick={() => onClose(paths)}>
-            {intl.formatMessage({ id: "actions.confirm" })}
-          </Button>
-        </Modal.Footer>
-      </Modal>
-    );
-  };
-
-  const VrTaskButtons: React.FC = () => {
-    const intl = useIntl();
-    const queue = useQueueTask();
-    const [options] = useVrOptions();
-    const [choosing, setChoosing] = React.useState(false);
-    const disabled = nothingSelected(options);
-
-    return (
-      <>
-        <Button
-          variant="secondary"
-          type="submit"
-          disabled={disabled}
-          onClick={() => queue(options, {})}
-        >
+        </Form>
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="secondary" onClick={onClose}>
+          {intl.formatMessage({ id: "actions.cancel" })}
+        </Button>
+        <Button onClick={onGenerate} disabled={running || loading || nothingSelected(options)}>
           {intl.formatMessage({ id: "actions.generate" })}
         </Button>
-        <Button
-          variant="secondary"
-          type="submit"
-          className="mr-2"
-          disabled={disabled}
-          onClick={() => setChoosing(true)}
-        >
-          {intl.formatMessage({ id: "actions.selective_generate" })}…
-        </Button>
-        {choosing ? (
-          <DirectorySelectionDialog
-            onClose={(paths) => {
-              setChoosing(false);
-              if (paths) queue(options, { paths });
-            }}
-          />
-        ) : null}
-      </>
+      </Modal.Footer>
+    </Modal>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ * Scene list: "Generate as VR…" under "Generate…"
+ *
+ * Neither … menu is a patchable component; shared/tree.ts finds them in the
+ * tree their ancestor returns.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Wraps the ListOperations element with one extra menu entry.
+ *
+ * A component rather than a plain clone because finding Stash's own
+ * "Generate…" entry means formatting the same message it did, which needs
+ * useIntl, and because the dialog has to live somewhere that outlives the
+ * dropdown closing.
+ */
+const SceneListOperations: React.FC<{ element: any; selectedIds: Set<string> }> = ({
+  element,
+  selectedIds,
+}) => {
+  const intl = useIntl();
+  const text = useText();
+  const [showing, setShowing] = React.useState(false);
+
+  const ids = React.useMemo(() => Array.from(selectedIds ?? []), [selectedIds]);
+
+  const operations = React.useMemo(() => {
+    const entry: Operation = {
+      // Worded like Stash's own entry: the title, then an ellipsis.
+      text: `${text("inzVrGenerate.title")}…`,
+      onClick: () => setShowing(true),
+      isDisplayed: () => ids.length > 0,
+    };
+    // Stash builds its entry as `${actions.generate}…`; matching that puts
+    // ours directly underneath rather than at the bottom of the menu.
+    const generate = `${intl.formatMessage({ id: "actions.generate" })}…`;
+    return insertOperation(element.props?.operations ?? [], entry, generate);
+  }, [element, ids, intl, text]);
+
+  return (
+    <>
+      {React.cloneElement(element, { operations })}
+      {showing ? (
+        <GenerateVrDialog sceneIds={ids} onClose={() => setShowing(false)} />
+      ) : null}
+    </>
+  );
+};
+
+const SceneListWrapper: React.FC<{ tree: any }> = ({ tree }) =>
+  safely(
+    PLUGIN_ID,
+    () =>
+      replaceListMenu(tree, (menu, selectedIds) => (
+        <SceneListOperations element={menu} selectedIds={selectedIds} />
+      )),
+    tree
+  );
+
+PluginApi.patch.after("FilteredSceneList", (_props: any, _context: any, result: any) =>
+  React.createElement(SceneListWrapper, { tree: result })
+);
+
+/* ------------------------------------------------------------------ *
+ * Scene page: the same entry in that scene's … menu
+ * ------------------------------------------------------------------ */
+
+const ScenePageWrapper: React.FC<{ tree: any; sceneId: string }> = ({ tree, sceneId }) => {
+  const text = useText();
+  const [showing, setShowing] = React.useState(false);
+
+  const patched = React.useMemo(() => {
+    const item = (
+      <Dropdown.Item key="inz-vr-generate" className="bg-secondary text-white" onClick={() => setShowing(true)}>
+        {`${text("inzVrGenerate.title")}…`}
+      </Dropdown.Item>
     );
-  };
+    return safely(PLUGIN_ID, () => insertAfterKey(tree, "generate", item), tree);
+  }, [tree, text]);
 
-  /* ------------------------------------------------------------------ *
-   * What the run is doing
-   *
-   * Stash lists a line per task in flight under the job it belongs to, but
-   * job.Details is written by the job runner alone: a plugin's only channel to
-   * the queue is the progress percentage, and JobTable is not patchable. What a
-   * plugin does have is its log lines, which the server broadcasts. So the same
-   * information is rebuilt here, under the plugin's own block, from the log.
-   *
-   * A readout, not a ledger. Broadcasts are batched about once a second and
-   * dropped whole rather than queued when a client is slow, so a backgrounded
-   * tab misses some; the subscription only exists while one of our jobs does,
-   * so the first line or two arrive only if the server's small log cache still
-   * has them. The progress bar in the queue remains the honest measure, and the
-   * log file the honest record.
-   * ------------------------------------------------------------------ */
+  return (
+    <>
+      {patched}
+      {showing ? (
+        <GenerateVrDialog sceneIds={[sceneId]} onClose={() => setShowing(false)} />
+      ) : null}
+    </>
+  );
+};
 
-  // Matches what vrlog.generating and vrlog.finished emit, which is worded like
-  // Stash's own subtask descriptions.
-  const RUN_LINE =
-    /^(Generating (?:cover|preview|animated preview|sprites)|Finished generating) for (.+)$/;
+PluginApi.patch.after("ScenePage", (props: any, _context: any, result: any) => {
+  const sceneId = props?.scene?.id;
+  if (!sceneId) return result;
+  return React.createElement(ScenePageWrapper, { tree: result, sceneId: String(sceneId) });
+});
 
-  // One row per scene in flight, so as many as the server's parallel task
-  // setting allows. The cap is what stops a dropped "Finished" line leaving a
-  // row behind for the rest of the run.
-  const MAX_RUN_LINES = 8;
+/* ------------------------------------------------------------------ *
+ * Settings > Tasks > Plugin Tasks
+ *
+ * The block has to read like the Generated Content section above it: two
+ * buttons beside the heading, the switches underneath. SettingGroup takes
+ * those as separate props, so the two halves cannot share component state --
+ * which is what useVrOptions, shared with the dialog, is for.
+ * ------------------------------------------------------------------ */
 
-  interface IRunLine {
-    path: string;
-    text: string;
-  }
+/** Stash's DirectorySelectionDialog, which is not exposed to plugins. */
+const DirectorySelectionDialog: React.FC<{ onClose: (paths?: string[]) => void }> = ({
+  onClose,
+}) => {
+  const intl = useIntl();
+  const { FolderSelect, Icon } = PluginApi.components;
+  const { data } = StashService.useConfiguration();
+  const [paths, setPaths] = React.useState<string[]>([]);
+  const [current, setCurrent] = React.useState("");
 
-  function applyEntries(previous: IRunLine[], entries: any[]): IRunLine[] {
-    // The prefix is the only marker a plugin's log lines carry, and it is built
-    // from the display name, which is why pluginName is asked for rather than
-    // assumed.
-    const prefix = `[Plugin / ${pluginName}] `;
-    let next = previous;
+  const libraryPaths = (data?.configuration?.general?.stashes ?? []).map(
+    (s: { path: string }) => s.path
+  );
 
-    for (const entry of entries) {
-      const message: unknown = entry?.message;
-      if (typeof message !== "string" || !message.startsWith(prefix)) continue;
-      const match = RUN_LINE.exec(message.slice(prefix.length));
-      if (!match) continue;
-      // Keyed by path: a scene's later artifact replaces its earlier one rather
-      // than stacking, and "Finished generating" just removes it.
-      next = next.filter((line) => line.path !== match[2]);
-      if (match[1] !== "Finished generating") {
-        next = next.concat({ path: match[2], text: match[0] });
-      }
-    }
-
-    return next === previous ? previous : next.slice(-MAX_RUN_LINES);
-  }
-
-  /** Whether one of this plugin's jobs is in the queue. */
-  function useVrJobRunning(): boolean {
-    const jobQueue = StashService.useJobQueue();
-    const jobsSubscribe = StashService.useJobsSubscribe();
-    const [ids, setIds] = React.useState<string[]>([]);
-
-    // The description is the marker, because it is the only part of the job
-    // that says the run is ours and it survives both a reload and a job queued
-    // from another tab.
-    const mine = (job: any) =>
-      typeof job?.description === "string" && job.description.includes(JOB_MARKER);
-
-    React.useEffect(() => {
-      setIds((jobQueue.data?.jobQueue ?? []).filter(mine).map((job: any) => String(job.id)));
-    }, [jobQueue.data]);
-
-    React.useEffect(() => {
-      const event = jobsSubscribe.data?.jobsSubscribe;
-      if (!event) return;
-      const id = String(event.job?.id);
-      const over =
-        event.type === "REMOVE" ||
-        ["FINISHED", "CANCELLED", "FAILED"].includes(event.job?.status);
-      setIds((previous) => {
-        if (over) return previous.filter((each) => each !== id);
-        if (!mine(event.job) || previous.includes(id)) return previous;
-        return previous.concat(id);
-      });
-    }, [jobsSubscribe.data]);
-
-    return ids.length > 0;
-  }
-
-  function useVrRunLines(): IRunLine[] {
-    const [lines, setLines] = React.useState<IRunLine[]>([]);
-    const { data } = StashService.useLoggingSubscribe();
-
-    // The server keeps only its last few dozen entries, but they are what fills
-    // the readout in for someone opening this page mid-run. Newest first, hence
-    // the reverse.
-    React.useEffect(() => {
-      StashService.queryLogs()
-        .then((result: any) =>
-          setLines((previous) => applyEntries(previous, [...(result?.data?.logs ?? [])].reverse()))
-        )
-        .catch(() => undefined);
-    }, []);
-
-    React.useEffect(() => {
-      const entries = data?.loggingSubscribe;
-      if (entries?.length) setLines((previous) => applyEntries(previous, entries));
-    }, [data]);
-
-    return lines;
-  }
-
-  /** Split out so the log subscription only exists while a run does. */
-  const VrRunStatus: React.FC = () => {
-    const text = useText();
-    const { Setting } = PluginApi.components;
-    const lines = useVrRunLines();
-    if (!lines.length) return null;
-    return (
-      <Setting heading={text("inzVrGenerate.currently_generating")}>
-        <div>
-          {lines.map((line) => (
-            // job-subtask is the class Stash gives the same thing; text-break is
-            // what keeps a long path inside the column.
-            <div className="job-subtask text-break" key={line.path}>
-              {line.text}
-            </div>
+  return (
+    <Modal show onHide={() => onClose()}>
+      <Modal.Header closeButton>
+        <Modal.Title>{intl.formatMessage({ id: "actions.select_folders" })}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <div className="dialog-container">
+          {paths.map((p) => (
+            <Row className="align-items-center mb-1" key={p}>
+              <Form.Label column xs={10}>
+                {p}
+              </Form.Label>
+              <Col xs={2} className="d-flex justify-content-end">
+                <Button
+                  className="ml-auto"
+                  size="sm"
+                  variant="danger"
+                  title={intl.formatMessage({ id: "actions.delete" })}
+                  onClick={() => setPaths(paths.filter((path) => path !== p))}
+                >
+                  <Icon icon={faMinus} />
+                </Button>
+              </Col>
+            </Row>
           ))}
+
+          <FolderSelect
+            currentDirectory={current}
+            onChangeDirectory={setCurrent}
+            defaultDirectories={libraryPaths}
+            appendButton={
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (current && !paths.includes(current)) setPaths(paths.concat(current));
+                }}
+              >
+                <Icon icon={faPlus} />
+              </Button>
+            }
+          />
         </div>
-      </Setting>
-    );
-  };
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="secondary" onClick={() => onClose()}>
+          {intl.formatMessage({ id: "actions.cancel" })}
+        </Button>
+        <Button disabled={paths.length === 0} onClick={() => onClose(paths)}>
+          {intl.formatMessage({ id: "actions.confirm" })}
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  );
+};
 
-  const VrTaskOptions: React.FC = () => {
-    const [options, setOptions] = useVrOptions();
-    const running = useVrJobRunning();
-    return (
-      <>
-        <VrGenerateOptions options={options} setOptions={setOptions} />
-        {running ? <VrRunStatus /> : null}
-      </>
-    );
-  };
+const VrTaskButtons: React.FC = () => {
+  const intl = useIntl();
+  const queue = useQueueTask();
+  const [options] = useVrOptions();
+  const [choosing, setChoosing] = React.useState(false);
+  const disabled = nothingSelected(options);
 
-  // PluginTasks wraps each plugin's tasks in a SettingGroup headed by that
-  // plugin's name. Replacing that group's children rather than adding to them
-  // is what hides the bare task button the manifest has to declare; setting
-  // topLevel is what puts the two buttons beside the heading.
-  let pluginName = "INZ VR Generated Content";
+  return (
+    <>
+      <Button
+        variant="secondary"
+        type="submit"
+        disabled={disabled}
+        onClick={() => queue(options, {})}
+      >
+        {intl.formatMessage({ id: "actions.generate" })}
+      </Button>
+      <Button
+        variant="secondary"
+        type="submit"
+        className="mr-2"
+        disabled={disabled}
+        onClick={() => setChoosing(true)}
+      >
+        {intl.formatMessage({ id: "actions.selective_generate" })}…
+      </Button>
+      {choosing ? (
+        <DirectorySelectionDialog
+          onClose={(paths) => {
+            setChoosing(false);
+            if (paths) queue(options, { paths });
+          }}
+        />
+      ) : null}
+    </>
+  );
+};
 
-  // The INZ prefix only groups the plugins on the Plugins page; the Tasks
-  // block sits among Stash's own sections and reads like one of them.
-  const TASKS_HEADING = "VR Generated Content";
+/* ------------------------------------------------------------------ *
+ * What the run is doing
+ *
+ * Stash lists a line per task in flight under the job it belongs to, but
+ * job.Details is written by the job runner alone: a plugin's only channel to
+ * the queue is the progress percentage, and JobTable is not patchable. What a
+ * plugin does have is its log lines, which the server broadcasts. So the same
+ * information is rebuilt here, under the plugin's own block, from the log.
+ *
+ * A readout, not a ledger. Broadcasts are batched about once a second and
+ * dropped whole rather than queued when a client is slow, so a backgrounded
+ * tab misses some; the subscription only exists while one of our jobs does,
+ * so the first line or two arrive only if the server's small log cache still
+ * has them. The progress bar in the queue remains the honest measure, and the
+ * log file the honest record.
+ * ------------------------------------------------------------------ */
 
-  PluginApi.patch.before("SettingGroup", (props: any, context: any) => {
-    if (props?.settingProps?.heading !== pluginName) return [props, context];
-    return [
-      {
-        ...props,
-        settingProps: {
-          ...props.settingProps,
-          heading: TASKS_HEADING,
-          // An element rather than a string: this is a props hook, not a
-          // component, so the string table has to be read one level down.
-          subHeading: React.createElement(Text, { id: "inzVrGenerate.tasks_description" }),
-        },
-        topLevel: React.createElement(VrTaskButtons),
-        children: React.createElement(VrTaskOptions),
-      },
-      context,
-    ];
-  });
+// Matches what vrlog.generating and vrlog.finished emit, which is worded like
+// Stash's own subtask descriptions.
+const RUN_LINE =
+  /^(Generating (?:cover|preview|animated preview|sprites)|Finished generating) for (.+)$/;
 
-  // The heading is the plugin's display name, so it is asked for rather than
-  // assumed -- renaming the plugin should not orphan the block. Until the answer
-  // arrives the manifest name stands in.
-  StashService.getClient()
-    .query({ query: PluginApi.GQL.PluginsDocument })
-    .then((result: any) => {
-      const found = (result?.data?.plugins ?? []).find((p: any) => p.id === PLUGIN_ID);
-      if (found?.name) pluginName = found.name;
-    })
-    .catch(() => {
-      /* the manifest name stands in */
+// One row per scene in flight, so as many as the server's parallel task
+// setting allows. The cap is what stops a dropped "Finished" line leaving a
+// row behind for the rest of the run.
+const MAX_RUN_LINES = 8;
+
+interface IRunLine {
+  path: string;
+  text: string;
+}
+
+function applyEntries(previous: IRunLine[], entries: any[]): IRunLine[] {
+  // The prefix is the only marker a plugin's log lines carry, and it is built
+  // from the display name, which is why pluginName is asked for rather than
+  // assumed.
+  const prefix = `[Plugin / ${pluginName}] `;
+  let next = previous;
+
+  for (const entry of entries) {
+    const message: unknown = entry?.message;
+    if (typeof message !== "string" || !message.startsWith(prefix)) continue;
+    const match = RUN_LINE.exec(message.slice(prefix.length));
+    if (!match) continue;
+    // Keyed by path: a scene's later artifact replaces its earlier one rather
+    // than stacking, and "Finished generating" just removes it.
+    next = next.filter((line) => line.path !== match[2]);
+    if (match[1] !== "Finished generating") {
+      next = next.concat({ path: match[2], text: match[0] });
+    }
+  }
+
+  return next === previous ? previous : next.slice(-MAX_RUN_LINES);
+}
+
+/** Whether one of this plugin's jobs is in the queue. */
+function useVrJobRunning(): boolean {
+  const jobQueue = StashService.useJobQueue();
+  const jobsSubscribe = StashService.useJobsSubscribe();
+  const [ids, setIds] = React.useState<string[]>([]);
+
+  // The description is the marker, because it is the only part of the job
+  // that says the run is ours and it survives both a reload and a job queued
+  // from another tab.
+  const mine = (job: any) =>
+    typeof job?.description === "string" && job.description.includes(JOB_MARKER);
+
+  React.useEffect(() => {
+    setIds((jobQueue.data?.jobQueue ?? []).filter(mine).map((job: any) => String(job.id)));
+  }, [jobQueue.data]);
+
+  React.useEffect(() => {
+    const event = jobsSubscribe.data?.jobsSubscribe;
+    if (!event) return;
+    const id = String(event.job?.id);
+    const over =
+      event.type === "REMOVE" ||
+      ["FINISHED", "CANCELLED", "FAILED"].includes(event.job?.status);
+    setIds((previous) => {
+      if (over) return previous.filter((each) => each !== id);
+      if (!mine(event.job) || previous.includes(id)) return previous;
+      return previous.concat(id);
     });
-})();
+  }, [jobsSubscribe.data]);
+
+  return ids.length > 0;
+}
+
+function useVrRunLines(): IRunLine[] {
+  const [lines, setLines] = React.useState<IRunLine[]>([]);
+  const { data } = StashService.useLoggingSubscribe();
+
+  // The server keeps only its last few dozen entries, but they are what fills
+  // the readout in for someone opening this page mid-run. Newest first, hence
+  // the reverse.
+  React.useEffect(() => {
+    StashService.queryLogs()
+      .then((result: any) =>
+        setLines((previous) => applyEntries(previous, [...(result?.data?.logs ?? [])].reverse()))
+      )
+      .catch(() => undefined);
+  }, []);
+
+  React.useEffect(() => {
+    const entries = data?.loggingSubscribe;
+    if (entries?.length) setLines((previous) => applyEntries(previous, entries));
+  }, [data]);
+
+  return lines;
+}
+
+/** Split out so the log subscription only exists while a run does. */
+const VrRunStatus: React.FC = () => {
+  const text = useText();
+  const { Setting } = PluginApi.components;
+  const lines = useVrRunLines();
+  if (!lines.length) return null;
+  return (
+    <Setting heading={text("inzVrGenerate.currently_generating")}>
+      <div>
+        {lines.map((line) => (
+          // job-subtask is the class Stash gives the same thing; text-break is
+          // what keeps a long path inside the column.
+          <div className="job-subtask text-break" key={line.path}>
+            {line.text}
+          </div>
+        ))}
+      </div>
+    </Setting>
+  );
+};
+
+const VrTaskOptions: React.FC = () => {
+  const [options, setOptions] = useVrOptions();
+  const running = useVrJobRunning();
+  return (
+    <>
+      <VrGenerateOptions options={options} setOptions={setOptions} />
+      {running ? <VrRunStatus /> : null}
+    </>
+  );
+};
+
+// PluginTasks wraps each plugin's tasks in a SettingGroup headed by that
+// plugin's name. Replacing that group's children rather than adding to them
+// is what hides the bare task button the manifest has to declare; setting
+// topLevel is what puts the two buttons beside the heading.
+let pluginName = "INZ VR Generated Content";
+
+// The INZ prefix only groups the plugins on the Plugins page; the Tasks
+// block sits among Stash's own sections and reads like one of them.
+const TASKS_HEADING = "VR Generated Content";
+
+PluginApi.patch.before("SettingGroup", (props: any, context: any) => {
+  if (props?.settingProps?.heading !== pluginName) return [props, context];
+  return [
+    {
+      ...props,
+      settingProps: {
+        ...props.settingProps,
+        heading: TASKS_HEADING,
+        // An element rather than a string: this is a props hook, not a
+        // component, so the string table has to be read one level down.
+        subHeading: React.createElement(Text, { id: "inzVrGenerate.tasks_description" }),
+      },
+      topLevel: React.createElement(VrTaskButtons),
+      children: React.createElement(VrTaskOptions),
+    },
+    context,
+  ];
+});
+
+// The heading is the plugin's display name, so it is asked for rather than
+// assumed -- renaming the plugin should not orphan the block. Until the answer
+// arrives the manifest name stands in.
+StashService.getClient()
+  .query({ query: PluginApi.GQL.PluginsDocument })
+  .then((result: any) => {
+    const found = (result?.data?.plugins ?? []).find((p: any) => p.id === PLUGIN_ID);
+    if (found?.name) pluginName = found.name;
+  })
+  .catch(() => {
+    /* the manifest name stands in */
+  });

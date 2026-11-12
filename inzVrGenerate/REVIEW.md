@@ -39,7 +39,7 @@ TSX agree") are recorded in prose alone.
 | 9 | A dangerous default: `format: "sbs"` plus Generate over the whole library | `inzVrGenerate.tsx` | major | open |
 | 10 | False positives on short tokens (`LR`, `TB`, `OU`, `MONO`) | `vrformat.py` | major | open |
 | 11 | The format table is duplicated three times | `vrformat.py`, `.tsx`, README | major | open |
-| 12 | There is not a single test, and CI does not run them | the repository | process | open |
+| 12 | There is not a single test, and CI does not run them | the repository | process | partly |
 | 13 | Progress bypasses its own rate limit | `vrlog.py` | process | open |
 | 14 | The whole library is materialised before the first ffmpeg starts | `inzVrGenerate.py`, `vrstash.py` | process | open |
 | 15 | Small things (17 items) | everywhere | minor | partly (1/17) |
@@ -51,7 +51,7 @@ TSX agree") are recorded in prose alone.
 | 1 | Timeouts (#2) + PDEATHSIG (#3) | Without them a stuck file or a cancelled task breaks the system, not just the run | done |
 | 2 | UTF-8 on stderr (#5) | A one-line fix that currently aborts an entire run | done |
 | 3 | `_outstanding` before `probe` (#1) | A one-line fix worth hours on repeat runs | done |
-| 4 | Tests of the pure functions + CI (#12) | They have already found a real `maximum_sprites` bug; without them any refactoring is blind | next |
+| 4 | Tests of the pure functions + CI (#12) | They have already found a real `maximum_sprites` bug; without them any refactoring is blind | partly |
 | 5 | An `auto` default / a geometry check (#9-10) | The only place where the plugin can quietly ruin someone else's data | |
 
 The first iteration's checks were run by hand (there are still no tests — that is #12):
@@ -331,6 +331,12 @@ the bound, so the "maximum 500" setting is violated by 29 cells.
 **Solution.** `python -m unittest discover` on stdlib (no dependencies — there is no pip
 in the image, but the tests are not run in the image either) plus a separate workflow on
 PRs that calls the tests, `tsc --noEmit` and `check:graphql` with a Stash checkout.
+
+> **Partly done.** [test/test_pure.py](test/test_pure.py) covers `from_filename`, `Geometry`,
+> `preview_segments`, `sprite_grid` (current behaviour, the bound above included), `vtt_time`
+> and `is_under`; `npm test` runs it and the Pages workflow runs `npm run check` and `npm test`
+> before building. Still open: the argument parsers, `applyEntries`, and `check:graphql` in CI,
+> which needs a Stash checkout.
 
 ### 13. Progress bypasses its own rate limit
 

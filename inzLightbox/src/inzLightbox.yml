@@ -2,13 +2,8 @@ name: INZ Lightbox
 description: Remembered per-photo zoom, smooth cursor-anchored zoom, hotkeys, auto fullscreen and steadier touch gestures for the image lightbox.
 version: 1.0.0
 
-# geometry.js, store.js and settings.js declare the InzLightbox namespace
-# inzLightbox.js uses, so they load first.
 ui:
   javascript:
-    - geometry.js
-    - store.js
-    - settings.js
     - inzLightbox.js
   css:
     - inzLightbox.css
