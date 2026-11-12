@@ -4,7 +4,8 @@ Replacement for `inzVrPreview`. Same idea — rebuild generated content from one
 presented as an ordinary Stash generation that happens to understand VR, rather than as a
 separate contraption with its own vocabulary.
 
-The plugin is called `inzVrGenerate`; everything a user sees calls it **VR Generated Content**.
+The plugin is called `inzVrGenerate`; the Plugins page lists it as **INZ VR Generated
+Content**, and everywhere else a user sees it is **VR Generated Content**.
 
 ## What it is, in one paragraph
 
@@ -47,9 +48,8 @@ Work through them in order; each one says what "done" means.
 
 ## Not doing (yet)
 
-Marker previews, marker animated previews and marker screenshots. The switches are present and
-disabled in both dialogs so the shape of the UI does not change when they are turned on; the
-backend has no marker code at all. See [03-backend-generate.md](03-backend-generate.md).
+Marker previews, marker animated previews and marker screenshots. The dialogs do not show
+them, and the backend has no marker code at all. See [03-backend-generate.md](03-backend-generate.md).
 
 Transcodes, force transcode, video perceptual hashes and interactive heatmaps are not this
 plugin's business and are absent entirely — they do not care which eye they read.

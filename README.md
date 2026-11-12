@@ -4,28 +4,7 @@ Plugins for [Stash](https://github.com/stashapp/stash).
 
 ## Plugins
 
-### inz-date-select
-
-Adds date-based filtering to the two pickers that link scenes and galleries together:
-
-- **Scene editor → Galleries** (`GallerySelect` / `FindGalleriesForSelect`)
-- **Gallery editor → Scenes** (`SceneSelect` / `FindScenesForSelect`)
-
-Two buttons appear under the picker:
-
-| Button      | Effect                                                                  |
-| ----------- | ----------------------------------------------------------------------- |
-| `Same date` | Only entries whose date equals the edited entity's date (`date EQUALS`) |
-| `±N d`      | Only entries within N days of it (`date BETWEEN`), N is configurable    |
-
-The reference date is read live from the `Date` field of the same form, so it follows unsaved
-edits. While a filter is active the dropdown is reordered by distance from that date instead of
-alphabetically.
-
-The buttons only show up in the scene and gallery edit panels. Every other place that uses these
-pickers — the image editor, bulk edit, the scene merge dialog — is left untouched.
-
-### inz-vr-generate — *VR Generated Content*
+### inz-vr-generate — *INZ VR Generated Content*
 
 Stash builds every generated artifact from the whole video frame. For a VR file that frame is a
 stereo pair, so the scene card, the hover preview and the scrubber all show a squashed double
@@ -77,7 +56,8 @@ VR…* — it sits directly under *Generate…*.
 
 **From one scene.** The same entry in that scene's own `…` menu.
 
-**From Settings → Tasks → Plugin Tasks.** The *VR Generated Content* block is shaped like the
+**From Settings → Tasks → Plugin Tasks.** The *VR Generated Content* block (the INZ prefix is
+left off here, it only groups the plugins on the Plugins page) is shaped like the
 **Generated Content** section above it: *Generate* covers the whole library, *Selective
 Generate…* opens the folder picker first, and the switches underneath apply to both.
 
@@ -96,7 +76,7 @@ with a message saying so rather than quietly doing nothing.
 The dialog is Stash's Generate dialog with the parts this plugin does not do left out. Transcodes,
 video perceptual hashes and interactive heatmaps are absent — they read the whole frame anyway,
 so run Stash's own Generate for those. Marker previews, marker animated previews and marker
-screenshots are shown but disabled: not implemented yet.
+screenshots are not implemented and not shown.
 
 A first run offers previews, scrubber sprites and the side-by-side format — the two artifacts a
 squashed stereo frame ruins most visibly, and the layout most VR files are in. After that it

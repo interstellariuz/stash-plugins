@@ -1,6 +1,6 @@
-name: VR Generated Content
+name: INZ VR Generated Content
 description: Generates covers, previews, animated previews and scrubber sprites for VR scenes from a single eye, cropped to 16:9, so they stop showing a squashed stereo pair.
-version: 1.0.0
+version: 1.0.1
 interface: raw
 errLog: error
 exec:
